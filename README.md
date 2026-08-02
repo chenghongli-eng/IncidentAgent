@@ -306,3 +306,6 @@ npm run desktop:build
 ## License
 
 Miniclaw 使用 MIT License，详见 [`LICENSE`](LICENSE)。
+
+# IncidentAgent
+线上故障分析Agent
