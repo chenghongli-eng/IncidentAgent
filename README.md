@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/helsome/miniclaw">GitHub</a> ·
+  <a href="https://github.com/chenghongli-eng/IncidentAgent">GitHub</a> ·
   <a href="docs/API.md">API</a> ·
   <a href="docs/ACL-MATRIX.md">权限模型</a> ·
   <a href="SECURITY.md">安全策略</a>
