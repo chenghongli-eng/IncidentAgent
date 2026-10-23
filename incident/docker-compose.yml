@@ -3,10 +3,17 @@ name: incident-lab
 services:
   target-service:
     image: ${TARGET_IMAGE:-incident/target-service:baseline}
+    build:
+      context: ./target-service
     container_name: target-service
     ports:
       - "8080:8080"
     environment:
+      # Everything in the lab is stamped in UTC. The read-only channels parse
+      # log timestamps and git commit times into the same frame; without this
+      # the container clock (UTC) and git (host-local) differ by the host offset
+      # and deployment-window correlation silently breaks.
+      TZ: UTC
       # Fault-injection knobs. Baseline values produce no fault.
       DB_POOL_SIZE: "${DB_POOL_SIZE:-10}"
       DOWNSTREAM_TIMEOUT_MS: "${DOWNSTREAM_TIMEOUT_MS:-2000}"

@@ -73,7 +73,7 @@ switch (cmd) {
     if (!fault) die(`unknown fault ${id}`);
     if (fault.kind !== 'code') die(`${id} is a runtime fault; nothing to show in git`);
     const current = readFileSync(join(SERVICE, fault.file), 'utf8');
-    if (current.includes(fault.replace)) die(`${id} is already injected; nothing to show`);
+    if (!current.includes(fault.find)) die(`${id} is already injected; nothing left to show`);
     process.stdout.write(`--- a/${fault.file}\n+++ b/${fault.file}\n`);
     process.stdout.write(`-${fault.find.replace(/\n/g, '\n-')}\n+${fault.replace}\n`);
     break;
@@ -94,9 +94,8 @@ switch (cmd) {
 
     const path = join(SERVICE, fault.file);
     const current = readFileSync(path, 'utf8');
-    if (current.includes(fault.replace)) die(`${id} is already injected`);
     if (!current.includes(fault.find)) {
-      die(`cannot inject ${id}: expected baseline text not found in ${fault.file}`);
+      die(`cannot inject ${id}: baseline text not found in ${fault.file} (already injected?)`);
     }
 
     writeFileSync(path, current.replace(fault.find, fault.replace));

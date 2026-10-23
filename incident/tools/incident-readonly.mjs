@@ -48,10 +48,24 @@ async function prom(path, params = {}) {
 
 function git(...argv) {
   try {
-    return execFileSync('git', argv, { cwd: REPO, encoding: 'utf8', maxBuffer: 8 << 20 });
+    return execFileSync('git', argv, {
+      cwd: REPO,
+      encoding: 'utf8',
+      maxBuffer: 8 << 20,
+      // Commit times are host-local by default; the target service logs in UTC.
+      // Emitting UTC here is what lets deployment-window compare the two.
+      env: { ...process.env, TZ: 'UTC' },
+    });
   } catch (err) {
     die(`git ${argv.join(' ')} failed: ${err.stderr ?? err.message}`);
   }
+}
+
+// Container logs are stamped in UTC ("2026-10-23 10:06:37.092"). Date.parse
+// would read that as host-local and shift every timestamp by the host offset.
+function parseLogTimestamp(text) {
+  const ms = Date.parse(`${text.slice(0, 10)}T${text.slice(11, 23)}Z`);
+  return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
 }
 
 function logFiles() {
@@ -116,7 +130,7 @@ async function main() {
         readFileSync(file, 'utf8')
           .split('\n')
           .filter(Boolean)
-          .map((text) => ({ text, ts: Date.parse(text.slice(0, 23)) })),
+          .map((text) => ({ text, ts: parseLogTimestamp(text) })),
       );
       lines = lines.filter((l) => l.ts >= sinceMs && l.text.includes(pattern));
       lines.sort((a, b) => a.ts - b.ts);
@@ -130,15 +144,28 @@ async function main() {
 
     case 'git': {
       const op = args.shift();
-      const fmt = { log: '--pretty=format:%H%x09%ad%x09%an%x09%s', date: 'iso-strict' };
+      // %aI is strict ISO 8601. We re-emit it as UTC ourselves: git's own
+      // %ad keeps the commit's recorded offset, so a commit made at +08:00
+      // would print 18:04 and the container's UTC log would print 10:04 for
+      // the same instant, breaking deployment-window correlation.
+      const LOG_FORMAT = '--pretty=format:%H%x09%aI%x09%an%x09%s';
+      const toUtcLines = (out) =>
+        out
+          .split('\n')
+          .map((line) => {
+            const m = line.match(/^(\S+)\t(\S+?)(?:[+-]\d{2}:\d{2}|Z)\t(.*)$/);
+            return m ? `${m[1]}\t${new Date(m[2]).toISOString()}\t${m[3]}` : line;
+          })
+          .join('\n');
+
       if (op === 'log') {
-        const argv = ['log', fmt.log, `--date=${fmt.date}`];
-        for (const [name, flagName] of [['since', 'since'], ['until', 'until']]) {
+        const argv = ['log', LOG_FORMAT];
+        for (const name of ['since', 'until']) {
           const v = flag(name);
-          if (v) argv.push(`--${flagName}=${v}`);
+          if (v) argv.push(`--${name}=${v}`);
         }
         argv.push(`-n${flag('limit', '20')}`);
-        return void console.log(git(...argv));
+        return void console.log(toUtcLines(git(...argv)));
       }
       if (op === 'diff') {
         const ref = args.shift();
@@ -150,9 +177,7 @@ async function main() {
       if (op === 'show') {
         const ref = args.shift();
         if (!ref) die('usage: git show <ref>');
-        return void console.log(
-          git('show', '--stat', '--pretty=fuller', `--date=${fmt.date}`, ref),
-        );
+        return void console.log(git('show', '--stat', '--pretty=fuller', ref));
       }
       return die(`unknown git op: ${op}`);
     }
