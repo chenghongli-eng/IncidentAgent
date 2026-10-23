@@ -4,6 +4,11 @@
       "path": "~",
       "allowReadWrite": true,
       "description": "Full home directory access"
+    },
+    {
+      "path": "/persistent/home/fs-user/IdeaProjects",
+      "allowReadWrite": true,
+      "description": "Persistent home — hosts the incident-lab workspace"
     }
   ],
   "blockedPatterns": [],
