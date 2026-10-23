@@ -1,0 +1,54 @@
+name: incident-lab
+
+services:
+  target-service:
+    image: ${TARGET_IMAGE:-incident/target-service:baseline}
+    container_name: target-service
+    ports:
+      - "8080:8080"
+    environment:
+      # Fault-injection knobs. Baseline values produce no fault.
+      DB_POOL_SIZE: "${DB_POOL_SIZE:-10}"
+      DOWNSTREAM_TIMEOUT_MS: "${DOWNSTREAM_TIMEOUT_MS:-2000}"
+      LOAD_ENABLED: "${LOAD_ENABLED:-true}"
+      LOAD_PATHS: "${LOAD_PATHS:-/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5}"
+    volumes:
+      # The Agent greps this file; it is the only log source in the lab.
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: incident-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=6h"
+    depends_on:
+      target-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: incident-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  alertmanager-data:

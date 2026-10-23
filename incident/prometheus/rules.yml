@@ -1,0 +1,27 @@
+groups:
+  - name: target-service
+    rules:
+      - alert: HighServerErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="target-service",status=~"5.."}[1m]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{application="target-service"}[1m])), 0.001)
+          > 0.05
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "target-service 5xx error rate above 5%"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over the last 1m."
+
+      - alert: SlowRequests
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_server_requests_seconds_bucket{application="target-service"}[1m])) by (le)
+          ) > 2
+        for: 60s
+        labels:
+          severity: warning
+        annotations:
+          summary: "target-service P99 latency above 2s"
+          description: "P99 is {{ $value | humanizeDuration }}."
