@@ -1,0 +1,11 @@
+route:
+  receiver: incident-log
+  group_by: ["alertname", "service"]
+  group_wait: 5s
+  group_interval: 30s
+  repeat_interval: 1h
+
+receivers:
+  # No external notifier in the lab. Firing alerts are recorded so the replay
+  # harness can read "alert firing timestamp" from a real Alertmanager state file.
+  - name: incident-log

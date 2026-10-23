@@ -1,0 +1,47 @@
+server:
+  port: 8080
+  error:
+    include-message: always
+
+spring:
+  application:
+    name: target-service
+  datasource:
+    url: jdbc:h2:mem:orders;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+  sql:
+    init:
+      mode: always
+
+app:
+  downstream:
+    base-url: ${DOWNSTREAM_BASE_URL:http://127.0.0.1:8080}
+    timeout-ms: ${DOWNSTREAM_TIMEOUT_MS:2000}
+  load:
+    enabled: ${LOAD_ENABLED:true}
+    interval-ms: ${LOAD_INTERVAL_MS:800}
+    paths: ${LOAD_PATHS:/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,threaddump,env,configprops,loggers
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: target-service
+
+logging:
+  file:
+    name: ${LOG_FILE:/app/logs/app.log}
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+  level:
+    com.example.target: INFO

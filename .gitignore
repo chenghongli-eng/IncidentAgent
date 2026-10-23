@@ -79,3 +79,7 @@ nohup.out
 auth.json
 models.json
 .pi/
+
+# IncidentAgent lab runtime artifacts
+incident/logs/
+incident/*-data/
