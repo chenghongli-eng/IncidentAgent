@@ -104,15 +104,16 @@ node incident/tools/incident-readonly.mjs metrics alerts
 
 若 Miniclaw 停了，重启：`node dist/index.js`（存档时 pid 617741 在跑，端口 3000）。
 
-重建 cookie 然后发消息：
+重建 cookie 然后发消息（脚本已随仓库提交，直接用仓库路径，`/tmp` 会被清空）：
 
 ```bash
-node /tmp/mc-auth.mjs > /tmp/mc-cookie.txt     # 注意 user_sessions.id 就是 token
-node /tmp/ws-run.mjs "web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb" /tmp/diag-prompt.txt
+node incident/runs/mc-auth.mjs > /tmp/mc-cookie.txt     # 注意 user_sessions.id 就是 token
+node incident/runs/ws-run.mjs "web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb" \
+     incident/runs/diag-prompt.txt
 ```
 
-（`/tmp` 里的三个脚本存档时被清了的话，重建见上文第 6 节和 WebSocket 消息格式，
-总共二十来行，不必找历史。）
+（存档时已实测过这两个脚本：cookie 脚本退出码 0，拿到的 cookie 调 `/api/auth/me` 返回 200。
+`ws-run.mjs` 把 Agent 回复写到 `/tmp/agent-out.txt`。）
 
 跑完把 Agent 输出存到 `incident/runs/` 下作为 demo 产物。
 
