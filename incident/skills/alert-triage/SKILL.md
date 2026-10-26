@@ -25,6 +25,11 @@ node "$INCIDENT_LAB" metrics alerts
 
 ## 判断启发
 
+- **`activeAt` 是告警进入 pending 的时刻，不是 firing 时刻。** Prometheus v1
+  `/api/v1/alerts` 只有 `activeAt`（v2 才有 `firedAt`），真正 firing = `activeAt + for`，
+  `for` 从 `/api/v1/rules` 读。写锚点时必须标明用的是哪一个：
+  写 "告警起始 = activeAt（pending 时刻）"，并另起一句给出 firing ≈ activeAt + for。
+  上一轮报告把 `activeAt` 直接说成 firing 时刻，是本项目要防的**锚点口径漂移**。
 - 载荷里 `service` 或 `job` label 缺失 → **降级处理**：声明"告警未指明服务，以下按告警中出现的服务名推断"，不要静默假设。
 - `starts_at` 缺失 → 以 `metrics range` 能查到的最早异常点回填，并说明这是回填值。
 - 同一服务同时有 critical 和 warning → **只以最高级为锚点**，warning 作为背景，不另起一条诊断线。
