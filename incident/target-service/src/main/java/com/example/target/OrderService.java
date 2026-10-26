@@ -26,7 +26,11 @@ public class OrderService {
         long userId = ((Number) order.get("USER_ID")).longValue();
         Map<String, Object> profile = downstream.fetchProfile(userId);
 
-        order.put("ship_to", profile.get("address"));
+        if (profile == null) {
+            order.put("ship_to", "UNKNOWN");
+        } else {
+            order.put("ship_to", profile.get("address"));
+        }
 
         log.info("order {} loaded for user {}", orderId, userId);
         return order;
