@@ -21,7 +21,18 @@ $LAB logs first 'NullPointerException' --since 2026-10-20T14:00:00
 
 # 按告警时间窗捞全部错误
 $LAB logs grep 'ERROR' --since 2026-10-20T14:15:00 --limit 50
+
+# 证明"某个时间窗内没有这个异常"——负证据也要能量化
+$LAB logs grep 'NullPointerException' --since <WINDOW_START> --until <WINDOW_END> --count
+
+# 反过来证明"这个时间窗之后才开始出现"
+$LAB logs grep 'NullPointerException' --since <WINDOW_END> --count
 ```
+
+`logs` 通道同时覆盖当前日志与轮转归档（`app.log.*`，gzip 与未压缩都读）。
+`--count` 只统计**带时间戳**的行：堆栈续行（`\tat ...`）没有时间戳、不计入，
+所以一次异常事件计数为 1，而直接 `grep` 同一模式会得到 2（事件头 + 堆栈首行）。
+要报"多少次异常"就用 `--count`，不要用 grep 的行数。
 
 ## 判断启发
 

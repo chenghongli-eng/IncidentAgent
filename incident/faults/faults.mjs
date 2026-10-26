@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SERVICE = process.env.TARGET_SERVICE_DIR ??
-  new URL('../target-service/', import.meta.url).pathname;
+  new URL('../workspace/target-service/', import.meta.url).pathname;
 
 const FAULTS = [
   {
@@ -100,7 +100,10 @@ switch (cmd) {
 
     writeFileSync(path, current.replace(fault.find, fault.replace));
     gitRoot('add', fault.file);
-    gitRoot('commit', '-m', `${fault.commit}\n\nFault-${id}: ${fault.title}`);
+    // The commit message is what the read-only `git` channel shows the agent.
+    // A body like "Fault-F2: unchecked downstream call raises NPE" hands over
+    // the ground truth, so the message stays a plain feature subject.
+    gitRoot('commit', '-m', fault.commit);
     process.stdout.write(`${id} injected and committed at ${git('rev-parse', '--short', 'HEAD')}\n`);
     process.stdout.write('now rebuild and redeploy:  docker compose up -d --build --force-recreate target-service\n');
     break;
@@ -108,7 +111,7 @@ switch (cmd) {
 
   case 'revert': {
     const head = git('log', '-1', '--pretty=%s');
-    if (!head.startsWith('Fault-')) die(`HEAD is not a fault commit: ${head}`);
+    if (head !== byId(id)?.commit) die(`HEAD is not the ${id} commit: ${head}`);
     gitRoot('revert', '--no-edit', 'HEAD');
     process.stdout.write(`reverted ${id ?? head}\n`);
     break;

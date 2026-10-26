@@ -278,7 +278,7 @@ for each fault in [F1..F8]:
 >
 > 基于 Miniclaw 多渠道 Agent 框架，为 Spring Boot 服务构建故障诊断 Agent。
 >
-> - 将 8 步故障诊断 SOP 拆解为 9 个可复用 Agent Skill，实现懒加载的能力编排，
+> - 将 8 步故障诊断 SOP 拆解为 8 个可复用 Agent Skill，实现懒加载的能力编排，
 >   避免诊断方法论挤占上下文预算
 > - 设计**故障注入式评测集**：注入 8 类真实故障（含 2 类非代码变更），
 >   ground truth 完全已知，构建可复现的诊断准确率基准，**Root Cause Accuracy XX%**，

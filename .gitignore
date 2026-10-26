@@ -83,3 +83,9 @@ models.json
 # IncidentAgent lab runtime artifacts
 incident/logs/
 incident/*-data/
+
+# The diagnosis Agent's workspace is its own git repository (see
+# incident/workspace/README.md): the agent must only be able to read the
+# target service's history through that repo, never the lab's own history,
+# which documents the injected faults.
+incident/workspace/

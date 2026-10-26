@@ -25,16 +25,25 @@ description: 确定最近的部署、重启或配置变更时间，判断它与�
 ```bash
 LAB='node "$INCIDENT_LAB"'
 
-# 配置类变更：直接读生效配置与启动时间
-$LAB actuator env | head -40
-$LAB actuator health
+# 容器重建时间 + 应用就绪时刻 —— 这就是 T_dep
+$LAB runtime started
+
+# 运行时旋钮的生效值（actuator 会把值全部掩码成 ******，读不到）
+$LAB runtime env
 
 # 代码变更：看部署窗口内的提交
 $LAB git log --since 2026-10-20T13:00:00 --limit 10
 ```
 
-容器重建时间可从 `docker inspect target-service` 的 `StartedAt` 获得；
-`deployment-window` 只负责给出这个时间，判断留给 `git-diff-analysis`。
+`runtime started` 一次给出两个时间：**容器重建时刻**（`container_started_at`）与
+**应用就绪时刻**（`app_started_log`）。取哪一个作 `T_dep` 取决于规则口径：
+以容器重建为准则故障落在窗口内的程度更宽，以应用就绪为准则更严。
+**选定一个口径后全程只用它，并在报告里写明用的是哪一个**——两个时间混用会让
+Δ(②−③) 这类差值失去意义。
+
+`runtime env` 只吐实验台的几个旋钮（超时、连接池、负载路径），不吐凭据。
+`actuator env` 与 `actuator configprops` 的值全部是 `******`，
+**不要**用它们判断配置是否变过，也不需要绕到容器外面去读。
 
 ## 输出
 

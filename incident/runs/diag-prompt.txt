@@ -1,4 +1,4 @@
-target-service 出现线上故障，Prometheus 的 HighServerErrorRate 告警已经 firing，severity=critical，activeAt=2026-10-23T10:07:04Z。
+target-service 出现线上故障，Prometheus 的 HighServerErrorRate 告警已经 firing，severity=critical。告警起始时间以 `metrics alerts` 返回的实时 `activeAt` 为准。
 
 请按 AGENTS 里的诊断流程收集证据并给出根因判断。要求：
 1. 每个结论都要写清楚它来自哪条查询的实际输出。

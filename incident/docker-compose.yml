@@ -4,7 +4,7 @@ services:
   target-service:
     image: ${TARGET_IMAGE:-incident/target-service:baseline}
     build:
-      context: ./target-service
+      context: ./workspace/target-service
     container_name: target-service
     ports:
       - "8080:8080"
@@ -16,12 +16,16 @@ services:
       TZ: UTC
       # Fault-injection knobs. Baseline values produce no fault.
       DB_POOL_SIZE: "${DB_POOL_SIZE:-10}"
+      # Hikari's own default is 30s, spelled out here so the knob is settable
+      # from the host. Pool exhaustion only surfaces as 5xx when this is
+      # shorter than the queueing delay; at 30s requests just get slow.
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:-30000}"
       DOWNSTREAM_TIMEOUT_MS: "${DOWNSTREAM_TIMEOUT_MS:-2000}"
       LOAD_ENABLED: "${LOAD_ENABLED:-true}"
       LOAD_PATHS: "${LOAD_PATHS:-/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5}"
     volumes:
       # The Agent greps this file; it is the only log source in the lab.
-      - ./logs:/app/logs
+      - ./workspace/logs:/app/logs
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/actuator/health"]
       interval: 5s
