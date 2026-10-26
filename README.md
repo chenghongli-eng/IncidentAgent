@@ -1,4 +1,4 @@
-# Miniclaw
+# Incident Agent
 
 <p align="center">
   <img src="web/public/icons/logo-1024.png" alt="Miniclaw logo" width="96" />
