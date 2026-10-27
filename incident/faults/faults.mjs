@@ -86,7 +86,7 @@ switch (cmd) {
     if (fault.kind === 'runtime') {
       process.stdout.write(
         `runtime fault ${id}: set ${JSON.stringify(fault.env)} on the target-service container,\n` +
-          'then run:  docker compose up -d --force-recreate target-service\n' +
+          'then run:  ./lab.sh recreate target-service\n' +
           'no commit is created -- that is the point of this fault class.\n',
       );
       break;
@@ -105,7 +105,7 @@ switch (cmd) {
     // the ground truth, so the message stays a plain feature subject.
     gitRoot('commit', '-m', fault.commit);
     process.stdout.write(`${id} injected and committed at ${git('rev-parse', '--short', 'HEAD')}\n`);
-    process.stdout.write('now rebuild and redeploy:  docker compose up -d --build --force-recreate target-service\n');
+    process.stdout.write('now rebuild and redeploy:  ./lab.sh build target-service\n');
     break;
   }
 
