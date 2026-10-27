@@ -12,14 +12,28 @@ description: 按服务与症状关键词召回该服务的历史故障处置记�
 知识落在工作区记忆里（`lesson` 类型），按服务 + 症状关键词召回：
 
 ```text
-workspace_memory_search(query="5xx NullPointerException 下游 未判空", kind="lesson")
+workspace_memory_search(query="target-service 5xx", kind="lesson")
 ```
+
+> 关键词只写**观察到的症状**（错误类型、下游调用失败、返回码），
+> 不要写推断出来的失效机制——那会让召回结果变成给答案的提示。
 
 工具名是 `workspace_memory_search`，参数只有 `query`（必填）、`kind`（可选，取
 `fact` / `decision` / `lesson` / `open_loop`）、`limit`（可选，默认 10）。
 
 **服务隔离不靠参数，靠工作区绑定**：该工具只搜当前工作区的记忆，搜不到别的服务的内容。
 所以「按服务隔离」成立的前提是——一个服务一个工作区，不要把多个服务塞进同一个工作区。
+
+### 检索是短语匹配，别把关键词堆在一起
+
+召回走的是 trigram 短语匹配：查询串要能在标题或正文里找到**连续的一段**。
+`query="5xx NullPointerException 下游 调用失败"` 这种堆在一起来的关键词，
+除非原文里真有一段一模一样的连续文本，否则返回 0 命中。
+
+所以召回策略是**先短后长**：先用单个服务名或单个症状词召回（`"target-service"`、
+`"5xx"`、`"NullPointerException"`），拿到命中后再从命中的正文里找同类症状。
+
+**0 命中不等于没有历史**——先换更短的检索式再下结论。
 
 ## 判断启发
 

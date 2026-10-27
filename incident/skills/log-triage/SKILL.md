@@ -44,10 +44,12 @@ $LAB logs grep 'NullPointerException' --since <WINDOW_END> --count
 ## 输出
 
 ```text
-首次出现：2026-10-20T14:20:07  异常类型：NullPointerException
-栈顶：com.example.target.OrderService.loadOrder(OrderService.java:44)
-分布：集中在 /api/orders/{id}，非全部请求
+首次出现：<ISO8601>  异常类型：<异常类型>
+栈顶：<全限定类名>.<方法名>(<文件名>.java:<行号>)
+分布：<集中在哪个接口 / 是否全部请求>
 ```
+
+> 示例里不要填具体类名、方法名或行号——那等于把答案写在契约里。占位符要由当轮证据填。
 
 ## 不要做的事
 
