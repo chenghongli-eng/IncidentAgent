@@ -15,7 +15,7 @@
   <artifactId>target-service</artifactId>
   <version>0.1.0</version>
   <name>target-service</name>
-  <description>Fault-injection target for IncidentAgent</description>
+  <description>Order and profile read service</description>
 
   <properties>
     <java.version>17</java.version>

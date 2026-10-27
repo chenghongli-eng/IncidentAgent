@@ -1,5 +1,4 @@
--- Seed data. Order 2 deliberately references user 9999, which has no profile row.
--- The baseline code degrades that to ship_to=UNKNOWN; fault F2 turns it into an NPE.
+-- Seed data. Order 2 references user 9999, which has no profile row.
 insert into profiles (id, address) values (1, 'Building 1, Shanghai');
 insert into profiles (id, address) values (3, 'Building 3, Shanghai');
 insert into profiles (id, address) values (4, 'Building 4, Shanghai');
