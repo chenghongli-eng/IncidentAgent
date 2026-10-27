@@ -12,12 +12,19 @@ description: 按服务与症状关键词召回该服务的历史故障处置记�
 知识落在工作区记忆里（`lesson` 类型），按服务 + 症状关键词召回：
 
 ```text
-memory.search(service="target-service", query="5xx NullPointerException 下游 未判空")
+workspace_memory_search(query="5xx NullPointerException 下游 未判空", kind="lesson")
 ```
+
+工具名是 `workspace_memory_search`，参数只有 `query`（必填）、`kind`（可选，取
+`fact` / `decision` / `lesson` / `open_loop`）、`limit`（可选，默认 10）。
+
+**服务隔离不靠参数，靠工作区绑定**：该工具只搜当前工作区的记忆，搜不到别的服务的内容。
+所以「按服务隔离」成立的前提是——一个服务一个工作区，不要把多个服务塞进同一个工作区。
 
 ## 判断启发
 
-- 召回结果按**服务严格过滤**。别的服务的记录即使关键词命中也不要引用。
+- 召回结果按**服务严格过滤**（工具只返回当前工作区的记录，别的服务的内容根本不会命中）。
+  即便命中了别的服务的记录也不要引用。
 - 召回内容标记为 `historical_data`，它描述的是**过去发生过什么**，不是对当前故障的判断。
   把它当线索，不当结论。
 - 命中历史记录时的正确用法是：**它提示失效机制可能是已知模式**，于是去当前日志里找同类证据。
