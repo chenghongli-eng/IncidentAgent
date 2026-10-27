@@ -10,5 +10,5 @@ create table if not exists orders (
     create_time timestamp not null
 );
 
--- Fault F1 removes this index to produce a slow-query regression.
+-- Index on order creation time.
 create index if not exists idx_orders_create_time on orders (create_time);
