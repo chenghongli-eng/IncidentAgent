@@ -1,6 +1,6 @@
 # IncidentAgent — 断点存档
 
-最后更新：2026-10-26 16:40。本文件是**唯一下次会话的入口**，先读它再动手。
+最后更新：2026-10-27。本文件是**唯一下次会话的入口**，先读它再动手。
 
 ## 一句话状态
 
@@ -80,17 +80,19 @@ e78a1c3  2026-10-21T14:35Z  chore(service): add downstream client, load driver a
 
 没有 `Fault-` 标签，没有回滚/重打的对子，没有实验台自己的提交。
 
-### 干净的 F4 时间线（本轮重建）
+### 干净的 F4 时间线（设计 + 实际执行到哪一步）
 
-| 时刻 (UTC) | 事件 |
-| --- | --- |
-| 07:23:25 | 提交 `409d265`（F2 代码上线前的最后一次提交） |
-| 07:29:36 | 容器重建，**timeout=2000** → 部署生效（T_dep） |
-| 07:29:44 | 应用就绪 |
-| 07:29–07:52 | **健康窗口 22 分钟，0 个 NPE、5xx 序列为空** |
-| 07:51:5x | 只改一个旋钮：`DOWNSTREAM_TIMEOUT_MS` 2000 → 1 |
-| 07:52:0x | 容器重建使新 env 生效（T2） |
-| 07:52:1x | 首个下游 Read timed out → 首个 NPE → 500 |
+| 时刻 (UTC) | 事件 | 状态 |
+| --- | --- | --- |
+| 07:23:25 | 提交 `409d265`（F2 代码上线前的最后一次提交） | 已发生 |
+| 07:29:36 | 容器重建，**timeout=2000** → 部署生效（T_dep） | 已发生，但已被 10-27 的重建取代 |
+| 07:29:44 | 应用就绪 | 已发生 |
+| 07:29:44–14:12:35 | **健康窗口 6 小时 43 分，0 个 NPE、0 个 ERROR**（`runs/log-archive/app.log.2026-10-26.0.gz`） | 已发生 |
+| 07:51:5x | 只改一个旋钮：`DOWNSTREAM_TIMEOUT_MS` 2000 → 1 | **未执行**（旋钮至今仍是 2000） |
+| 07:52:0x | 容器重建使新 env 生效（T2） | 未执行 |
+| 07:52:1x | 首个下游 Read timed out → 首个 NPE → 500 | 未发生 |
+| **2026-10-27 01:39:40** | **容器再次重建**（镜像、代码、旋钮均未变；重建原因未记录），应用 01:39:59 就绪 | 已发生 → **当前 T_dep** |
+| 01:39:59 – 至今 | 健康窗口持续中。**除一次人为探测外 0 NPE / 0 ERROR**（`workspace/logs/app.log`）：2026-10-27 04:02:41 手工 `curl /api/orders/2` 触发 1 次 NPE + 2 条 ERROR——它顺带证明**F2 缺陷确实已部署**，缺陷静默只因 order 2 不在 `LOAD_PATHS` 里 | 已发生 |
 
 设计要点：F2 提交距故障起点 **>15 分钟**，所以按 `deployment-window` 的判定表，
 「最近一次代码变更」这一支落在**相关性弱**区间；而部署窗口（容器重建）内**无提交**，
@@ -120,7 +122,7 @@ F2 已经证明「**相关**」时 Agent 能查到底。F4 对照组证明的是
 | F4 | `DOWNSTREAM_TIMEOUT_MS=50` | 基线代码下 **0 个 5xx**：`DownstreamClient` 吞掉所有下游异常并 `return null`，基线代码判空后降级成 `ship_to=UNKNOWN`，HTTP 仍是 200 |
 | F5 | `DB_POOL_SIZE=2` | 基线代码下 **0 个 5xx**：容器内 `LoadDriver` 是 `@Scheduled(fixedDelay)` **严格串行**（每 tick 只发一个请求），永远打不满连接池 |
 
-F5 加压实测（`incident/tools/load-hammer.mjs`，本轮新增）：
+F5 加压实测（`incident/faults/load-hammer.mjs`，本轮新增）：
 
 - `pool=2` + 30s 默认获取超时 + 64 并发 → 11,691 请求**全部 200**，p99 208ms：池被打满但请求只是变慢
 - `pool=2` + `connection-timeout=250ms` + 64/256 并发 → 确有池耗尽
@@ -226,7 +228,7 @@ cd /persistent/home/fs-user/IdeaProjects/ai_coding/study/miniclaw-main/miniclaw-
 ls container/agent-runner/dist/pi-index.js
 
 # 1. 确认实验栈在跑
-cd incident && docker compose ps && cd ..
+cd incident && ./lab.sh ps && cd ..
 
 # 2. 起 Miniclaw（没在跑的话）
 node dist/index.js
@@ -238,38 +240,91 @@ node incident/runs/ws-run.mjs "web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb" \
 ```
 
 Agent 文本在 `agent_reply` 事件里，不在 `message`/`stream` 里——这个坑踩过一次。
-`ws-run.mjs` 把输出写到 `/tmp/agent-out.txt`。
+`ws-probe.mjs` 把 `agent_reply` 全文累积并写到 `/tmp/agent-out.txt`；`ws-run.mjs` 只逐条打印
+事件（每条截断 220 字符），排查事件流时用它。
+
+> chatJid `web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb` = 工作区「incident-lab」，
+> `custom_cwd` 指向 `incident/workspace`（host 模式），所以 Agent 的 cwd 就是那个隔离仓库。
+> 若工作区被重建，JID 会变，用 `GET /api/groups` 重新查。
 
 **重放对照组的完整配方**（三段式，约 25 分钟，见上节设计）：
+
+> ⚠️ 所有 compose 调用必须走 `incident/lab.sh`。裸跑 `docker compose` 会在找不到
+> `.env` 时**静默把旋钮重置成 compose 里的默认值**——那等于凭空造出一次故障。
+> `lab.sh` 强制 `--env-file`，缺文件直接报错退出。
 
 ```bash
 cd incident
 
-# 1. 重新注入 F2 并提交（基线代码带判空时才能注入）
-node faults/faults.mjs inject F2
+# 0. 旋钮文件必须存在
+ls ~/.config/miniclaw-lab/lab.env
 
-# 2. 部署「静默版」：order 2 不进负载 → 零异常
-docker compose up -d --build --force-recreate target-service
+# 1. F2 缺陷已注入并已部署（服务仓库 HEAD = 409d265，镜像里带该缺陷：
+#    curl /api/orders/2 返回 500 NPE）。当前任务是让它「静默」——
+#    order 2 不在 LOAD_PATHS 里 → 零异常。
+#    只有把服务仓库退回基线时才需要重新注入（重复注入会报
+#    "baseline text not found (already injected?)"）：
+#    node faults/faults.mjs inject F2
+
+# 2. 部署「静默版」（--no-deps，不顺带重建依赖服务）
+./lab.sh recreate target-service
 
 # 3. 等 >15 分钟，让提交落到窗口外
 
 # 4. 只改一个旋钮 → 触发
-sed -i 's/^DOWNSTREAM_TIMEOUT_MS=.*/DOWNSTREAM_TIMEOUT_MS=1/' .env
-docker compose up -d --force-recreate target-service
+sed -i 's/^DOWNSTREAM_TIMEOUT_MS=.*/DOWNSTREAM_TIMEOUT_MS=1/' ~/.config/miniclaw-lab/lab.env
+./lab.sh recreate target-service
 
 # 5. 等告警 firing（约 90 秒）→ 跑 Agent
 ```
 
+## 存档：暂缓执行的两项（2026-10-26 18:30 归档，后面再跑）
+
+用户决定先出简历，这两项暂停，**不是放弃**。恢复时按下面的入口走：
+
+| 项 | 当前状态 | 恢复入口 |
+| --- | --- | --- |
+| **无泄漏的通道合规复跑 + transcript 审计** | T1 已就绪：容器 **2026-10-27T01:39:40Z** 重建（镜像、代码、旋钮均未变），应用 01:39:59 就绪，`DOWNSTREAM_TIMEOUT_MS=2000`。**F2 缺陷已部署**（`curl /api/orders/2` 返回 500 NPE），只因 order 2 不在 `LOAD_PATHS` 里而静默；健康窗口除这一次人为探测外 0 NPE / 0 ERROR（上一段 2026-10-26 07:29:44–14:12:35 也是 0 NPE）。旋钮未改到 1、故障未注入。 | 本文「答案泄漏清理与通道合规复跑」一节；步骤 ① 改旋钮到 1 + `lab.sh recreate` ② 跑诊断 ③ 审 transcript 确认全程留在只读通道 ④ 回填 claim-101/102 并更新 `last_verified` |
+| **F5（连接池类故障）重定义** | 按原定义不可观测（详见下节实测）。`incident/faults/load-hammer.mjs` 已写好。 | 见下节「F5 需要重定义」 |
+
+**约束**：这两项完成前，简历里 101/102 的取证口径说明**不得删除**——
+它们声明的是「该轮证明的是结论正确、流程跑通，不是取证过程干净」。
+
+### 复跑前必须先处理：工作区仓库是 dirty 的
+
+`incident/workspace/` 里的 `tools/incident-readonly.mjs` 相对它自己的 HEAD（`409d265`）
+是 **modified**——就是「`git file` 路径越界」那处修复：外层仓库已提交，Agent 实际用的那份改了但没提交。
+
+麻烦在于 `$LAB git diff <sha>` 比的是**提交 vs 工作区**，所以复跑时它会把这个工具文件的改动
+一起带进 diff 输出，Agent 可能把它读成「窗口内有代码变更」——而 F4 对照组正是靠
+「窗口内无代码变更」来排除发布假设的。
+
+两条路，**选哪条都会改变实验或口径，需要本人定**：
+
+| 方案 | 代价 |
+| --- | --- |
+| (a) 接受噪声，不动工作区 | 复跑时 diff 里多一个工具文件。Agent 若能识别「工具文件不在服务调用链上」则结论不变，但要人工复核这一点 |
+| (b) 在工作区仓库提交这个修复 | 干净了，但会往 **Agent 可见的服务历史**里加一条提交，「最近一次提交」的拓扑随之改变（不再是 F2 那条），F4 对照组的前提与台账里 `Δ=20.6 分钟` 的口径都要同步改 |
+
+（b) 不是「顺手提交一下」——它会动到这轮实验的判定前提，所以默认不动。
+
+## 已完成（别重做）
+
+这两项曾列在待办里，实际早已落地（随 `38f1af2` 进仓库），不要再当待办排期：
+
+| 项 | 落地形态 | 位置 |
+| --- | --- | --- |
+| **只读 CLI 的 runtime-env 通道** | `$LAB runtime env` 吐实验台那几个旋钮的生效值 + 旋钮文件 mtime；`$LAB runtime started` 吐容器重建时刻与应用就绪时刻。工具内部调 `docker inspect`，所以从 Agent 侧看整条链仍留在通道内。 | `incident/tools/incident-readonly.mjs`（`case 'runtime'`）；`incident/agent-profile/identity.json` 的 `tools_prompt` 已把这两条命令写给 Agent |
+| **旋钮文件挪出仓库** | 旋钮在 `~/.config/miniclaw-lab/lab.env`（chmod 600），仓库内已无 `incident/.env`；`incident/lab.sh` 强制 `docker compose --env-file` | `incident/lab.sh`、`incident/lab.env.example` |
+
+> 这两条原本出现在「还没做的」清单里，是文档漂移，已删项。
+
 ## 还没做的
 
-- **【新增·高优先】给只读 CLI 补 runtime-env 通道**：现在 Agent 要拿「生效的超时/连接池配置」
-  必须 `docker inspect` 越界。应该补 `runtime env`（只吐实验台那几个旋钮）+ `runtime started`
-  （容器启动时间），让整条链留在通道内。
 - **【新增】F5 需要重定义**：按原定义（只调 `DB_POOL_SIZE`）在本实验台不可观测。
-  可选方向：把连接获取超时纳入 F5 定义 + 配套负载发生器（`incident/tools/load-hammer.mjs`
+  可选方向：把连接获取超时纳入 F5 定义 + 配套负载发生器（`incident/faults/load-hammer.mjs`
   已写好），但 Hikari 250ms 下限决定了失败率只能在 0.5% 量级，**达不到 5% 告警阈值**——
   要么改告警阈值做专项演练，要么放弃 F5 走别的资源类故障。
-- **【新增】`.env` 挪出仓库**：放 `/tmp/lab.env` + `docker compose --env-file`，避免「旋钮明文可读」。
 - **只读 MCP 工具通道**（`pending`）。CLI 通道已经验证可用且够用，MCP 封装一直没做，
   因为 Pi SDK 的 MCP 兼容性和 `@modelcontextprotocol/sdk` 都不是本项目依赖。没验证之前别急着写。
 - **logs 通道支持 `.gz`**（F2 那轮踩到，本轮又踩到一次：Agent 为了数「静默期 0 次 NPE」
@@ -280,12 +335,17 @@ docker compose up -d --force-recreate target-service
 
 ## 简历包状态
 
-`claim-incident-101`（F2 正例）已从 `pending` 翻成 `confirmed`（2026-10-26），
-路径 `/home/fs-user/Desktop/文档/overleaf/miniclaw_incident相关/claim-ledger.json`。
+`claim-incident-101`（F2 正例）与 `claim-incident-102`（F4 对照组 / 过度归因防护）
+均已 `confirmed`（2026-10-26），路径
+`/home/fs-user/Desktop/文档/overleaf/miniclaw_incident相关/claim-ledger.json`。
 
-本轮新增 `claim-incident-102`（F4 对照组 / 过度归因防护），同样 `confirmed`，
-`allowed_uses` 仍是 `["audit", "interview"]`——**没有**放行到 `resume_draft` / `resume_final`，
-放行与否由本人决定。
+**【2026-10-26 18:xx 本人决定】两条均已放行到 `resume_draft` / `resume_final`**，
+放行条件是把各自的取证口径说明写进同一条简历表述。成稿见
+`paste-ready-当前可贴.md`（5 条，直接贴）与 `paste-ready-最终版.md`（同样 5 条 + 复核记录 + 禁写清单）。
+
+> **101 也受同一处答案泄漏污染**（此前只记了 102）：02:22Z 报告的根因段引用了
+> 引入故障的 commit body（`Fault-F2: unchecked downstream call raises NPE`），
+> 与泄漏正文的机制摘要重合。两条 claim 的 `boundary` / `risk_notes` 均已补上披露。
 
 `agent-project-model.json` 里对应的 artifact 已同步为 `Implemented`（本轮新增
 `artifact-incident-007`，`agent_layer: Eval`），避免台账自相矛盾；`coverage.eval`
