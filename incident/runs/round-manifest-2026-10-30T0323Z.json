@@ -1,0 +1,60 @@
+{
+  "stamp": "2026-10-30T0323Z",
+  "fault": "F4",
+  "started_at": "2026-10-30T03:23:45.184Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：incident-prometheus, incident-alertmanager, target-service"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（638936 → 639276 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "旋钮在基线（DOWNSTREAM_TIMEOUT_MS=2000）"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P6",
+      "ok": true,
+      "detail": "order1=200、order2=500（F2 缺陷已部署且沉默）"
+    },
+    {
+      "id": "P7",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（5514 分钟前）：072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "restore": null,
+  "score": null,
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0323Z.json",
+  "preflight_note": "P6 的 order2 探针本身会产生 1 次 500，1 分钟窗口后自然衰减出比例分子；P5 因此排在它前面测。",
+  "finished_at": "2026-10-30T03:23:48.446Z"
+}

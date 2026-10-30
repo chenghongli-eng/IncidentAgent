@@ -1,0 +1,84 @@
+{
+  "report": "agent-report-2026-10-26T0222Z.md",
+  "ground_truth": "ground-truth/F2.json",
+  "rubric_version": "v3",
+  "fault_id": "F2",
+  "fault_class": "变更关联（代码）",
+  "root_cause_accuracy": 1,
+  "accuracy_tier": "hit",
+  "deployment_attribution": "relevant",
+  "deployment_attribution_correct": "correct",
+  "deployment_expected": "relevant",
+  "criteria": [
+    {
+      "id": "F2-C1",
+      "name": "根因定位到代码变更（发布），并把它指认为致因",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…## 【根因假设】 **置信度：0.96** **机制**：commit `17ae5df` 重新引入了 10-23 已被 `e9b5092` 回滚掉的同一处改动——删除 `OrderService.loadOrder` 的 `profile` 判空兜底。`DownstreamClient.fetchProfile` 在下游 404 时按契约返回 `null`，`OrderService.java:29` 抛 NPE，`/api/orders/{id}` 返回 50…"
+    },
+    {
+      "id": "F2-C2",
+      "name": "识别失效机制：下游返回 null → 未判空 → NPE → 500",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…nstreamClient.fetchProfile` 在下游 404 时按契约返回 `null`，`OrderService.java:29` 抛 NPE，`/api/ord…"
+    }
+  ],
+  "deployment_checks": [
+    {
+      "id": "F2-D2",
+      "name": "报告把发布排除为触发源，或把它降级为必要条件",
+      "result": "FAIL",
+      "evidence": null
+    },
+    {
+      "id": "F2-D1",
+      "name": "报告把发布/代码变更说成触发源",
+      "result": "PASS",
+      "evidence": "…## 【根因假设】 **置信度：0.96** **机制**：commit `17ae5df` 重新引入了 10-23 已被 `e9b5092` 回滚掉的同一处改动——删除 `OrderService.loadOrder` 的 `…"
+    }
+  ],
+  "quality": [
+    {
+      "id": "Q1",
+      "name": "给出三个锚点（告警 / 异常首现 / 部署）",
+      "scope": "anchors",
+      "result": "PASS",
+      "evidence": "…锚点 | 时间 (UTC) | 来源 | |---|---|---| | ① 告警起始时间 | **2026-10-26T02:20:04.991948342Z*…"
+    },
+    {
+      "id": "Q2",
+      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "scope": "whole",
+      "result": "FAIL",
+      "evidence": "…entErrorException$NotFound: 404`。 **7. 触发条件未变（长期存在的数据事实）** 来源：`target-service/src/m…"
+    },
+    {
+      "id": "Q3",
+      "name": "排除的假设达到 3 条以上",
+      "scope": "excluded",
+      "result": "PASS",
+      "evidence": "（本节列出 7 条：编号 7）"
+    },
+    {
+      "id": "Q4",
+      "name": "列出反对证据 / 尚未解释项",
+      "scope": "against",
+      "result": "PASS",
+      "evidence": "…## 【反对证据 / 尚未解释】 - **`17ae5df` 为何被产生，无证据**。它与 `0d6d0d4…"
+    }
+  ],
+  "needs_review": [],
+  "rescored_from": {
+    "rubric_version": "v2",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "relevant",
+    "deployment_attribution_correct": "correct"
+  }
+}

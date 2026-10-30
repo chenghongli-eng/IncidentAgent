@@ -1,0 +1,91 @@
+{
+  "stamp": "2026-10-30T0350Z",
+  "fault": "F4",
+  "started_at": "2026-10-30T03:50:54.446Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：incident-prometheus, incident-alertmanager, target-service"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（869617 → 869957 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "旋钮在基线（DOWNSTREAM_TIMEOUT_MS=2000）"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P6",
+      "ok": true,
+      "detail": "order1=200、order2=500（F2 缺陷已部署且沉默）"
+    },
+    {
+      "id": "P7",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（5542 分钟前）：072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "injection": {
+    "fault": "F4",
+    "knob": "DOWNSTREAM_TIMEOUT_MS",
+    "from": 2000,
+    "to": 1,
+    "at": "2026-10-30T03:50:58.636Z",
+    "head_before": "072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root",
+    "note": "缺陷提交在 15 分钟窗口外，本次只改运行时旋钮"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-10-30T03:51:19.991948342Z",
+    "value": "3.7436883753796335e-01",
+    "observed_at": "2026-10-30T03:51:54.444Z"
+  },
+  "agent": {
+    "report": "<repo>/incident/runs/agent-report-2026-10-30T0350Z.md",
+    "started_at": "2026-10-30T03:51:54.444Z",
+    "finished_at": "2026-10-30T03:57:20.842Z",
+    "chars": 15285,
+    "stderr_tail": "",
+    "transcript": "<repo>/incident/runs/session-transcripts/2026-10-30T03-51-58-391Z_01a18aef-90b7-7fac-9989-3d0f17daead3.jsonl"
+  },
+  "restore": null,
+  "score": {
+    "path": "<repo>/incident/runs/score-2026-10-30T0350Z.json",
+    "rubric_version": "v3",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "excluded",
+    "deployment_attribution_correct": "correct",
+    "deployment_expected": "excluded",
+    "needs_review": []
+  },
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0350Z.json",
+  "preflight_note": "P6 的 order2 探针本身会产生 1 次 500，1 分钟窗口后自然衰减出比例分子；P5 因此排在它前面测。",
+  "finished_at": "2026-10-30T03:57:21.516Z",
+  "aborted": "fetch failed"
+}

@@ -1,0 +1,77 @@
+{
+  "report": "agent-report-2026-10-30T0431Z.md",
+  "ground_truth": "ground-truth/F4.json",
+  "rubric_version": "v2",
+  "fault_id": "F4",
+  "fault_class": "配置类变更",
+  "root_cause_accuracy": 1,
+  "accuracy_tier": "hit",
+  "deployment_attribution": "excluded",
+  "deployment_attribution_correct": "correct",
+  "deployment_expected": "excluded",
+  "criteria": [
+    {
+      "id": "F4-C1",
+      "name": "根因定位到运行时旋钮/配置层，并指认它为触发源",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…【根因假设】 置信度：0.95 机制：运行时配置把下游读超时压到 1ms（DOWNSTREAM_TIMEOUT_MS=1），使 target-service 调本机 /profiles/{i…"
+    },
+    {
+      "id": "F4-C2",
+      "name": "识别失效机制链：读超时 → fetchProfile 返回 null → 未判空 → NPE → 500",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…【根因假设】 置信度：0.95 机制：运行时配置把下游读超时压到 1ms（DOWNSTREAM_TIMEOUT_MS=1），使 target…"
+    }
+  ],
+  "deployment_checks": [
+    {
+      "id": "F4-D1",
+      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "result": "PASS",
+      "evidence": "…例为 0。 结论：代码变更只是**前置缺陷**（删掉 null 兜底），不是触发因素。Δ(T_err − T_dep) = +0.56s 的高度相关性来自运…"
+    },
+    {
+      "id": "F4-D2",
+      "name": "报告把发布/代码变更说成触发源",
+      "result": "FAIL",
+      "evidence": null
+    }
+  ],
+  "quality": [
+    {
+      "id": "Q1",
+      "name": "给出三个锚点（告警 / 异常首现 / 部署）",
+      "scope": "anchors",
+      "result": "PASS",
+      "evidence": "…``` 服务：target-service ｜ 严重级：critical ｜ 告警起始：2026-10-30T04:32:19.991948342Z (activ…"
+    },
+    {
+      "id": "Q2",
+      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "scope": "whole",
+      "result": "PASS",
+      "evidence": "….get(\"address\")); ``` **这解释了\"为什么会 NPE\"（前置缺陷：删掉了 null 兜底），但它不是本次的触发原因** —— 该提交自 10-2…"
+    },
+    {
+      "id": "Q3",
+      "name": "排除的假设达到 3 条以上",
+      "scope": "excluded",
+      "result": "PASS",
+      "evidence": "（本节列出 6 条：bullet 6）"
+    },
+    {
+      "id": "Q4",
+      "name": "列出反对证据 / 尚未解释项",
+      "scope": "against",
+      "result": "PASS",
+      "evidence": "…【反对证据 / 尚未解释】 - 04:31:55 的容器重建本身没有引入任何代码改动，\"为什么恰好在…"
+    }
+  ],
+  "needs_review": []
+}

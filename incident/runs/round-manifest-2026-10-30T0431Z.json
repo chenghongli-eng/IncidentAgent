@@ -1,0 +1,117 @@
+{
+  "stamp": "2026-10-30T0431Z",
+  "fault": "F4",
+  "started_at": "2026-10-30T04:31:48.672Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（6322620 → 6322959 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（5582 分钟前）：072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": {
+    "note": "台子已在静默态：缺陷在线但 order 2 不在压测路径"
+  },
+  "settle": {
+    "skipped": true
+  },
+  "injection": {
+    "fault": "F4",
+    "at": "2026-10-30T04:31:54.193Z",
+    "knob": "DOWNSTREAM_TIMEOUT_MS",
+    "from": "2000",
+    "to": "1",
+    "changed": [
+      "运行时旋钮"
+    ],
+    "unchanged": [
+      "代码",
+      "压测路径",
+      "数据"
+    ],
+    "note": "本轮只改运行时旋钮，代码一行没动"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-10-30T04:32:19.991948342Z",
+    "value": "4.305359483367517e-01",
+    "observed_at": "2026-10-30T04:32:54.058Z"
+  },
+  "agent": {
+    "report": "<repo>/incident/runs/agent-report-2026-10-30T0431Z.md",
+    "started_at": "2026-10-30T04:32:54.058Z",
+    "finished_at": "2026-10-30T04:37:29.001Z",
+    "chars": 10334,
+    "stderr_tail": "",
+    "transcript": "<repo>/incident/runs/session-transcripts/2026-10-30T04-32-59-385Z_01a18b15-1df9-76d9-b47e-071ed88c70b7.jsonl"
+  },
+  "channel_audit": {
+    "transcript": "<repo>/data/sessions/flow-mvkttud1-ah1b/.claude/sessions/2026-10-30T04-32-59-385Z_01a18b15-1df9-76d9-b47e-071ed88c70b7.jsonl",
+    "tool_calls": 36,
+    "contaminating": 0,
+    "out_of_surface": 1,
+    "stale_path_uses": 0,
+    "verdict": "out_of_surface",
+    "findings": [
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "curl/wget",
+        "why": "直连监控面，绕过了只读工具（只读工具缺对应子命令时可以接受，但要披露）",
+        "at": "2026-10-30T04:33:16.595Z",
+        "excerpt": "cd <repo>/incident/workspace && curl -s --max-time 10 http://127.0.0.1:9090/api/v1/rules 2>&1 | python3 -c \" import json,sys d=json.load(sys.stdin) fo"
+      }
+    ]
+  },
+  "restore": {
+    "ok": true,
+    "at": "2026-10-30T04:37:29.055Z",
+    "knob": "DOWNSTREAM_TIMEOUT_MS",
+    "to": "2000"
+  },
+  "score": {
+    "path": "<repo>/incident/runs/score-2026-10-30T0431Z.json",
+    "rubric_version": "v3",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "excluded",
+    "deployment_attribution_correct": "correct",
+    "deployment_expected": "excluded",
+    "needs_review": []
+  },
+  "round_valid": true,
+  "invalid_reason": null,
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0431Z.json",
+  "finished_at": "2026-10-30T04:38:21.990Z"
+}

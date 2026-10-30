@@ -6,9 +6,9 @@
       "description": "Full home directory access"
     },
     {
-      "path": "/persistent/home/fs-user/IdeaProjects",
+      "path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main",
       "allowReadWrite": true,
-      "description": "Persistent home — hosts the incident-lab workspace"
+      "description": "Project root — hosts the incident-lab workspace"
     }
   ],
   "blockedPatterns": [],

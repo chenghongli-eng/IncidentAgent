@@ -1,0 +1,77 @@
+{
+  "report": "agent-report-2026-10-30T0350Z.md",
+  "ground_truth": "ground-truth/F4.json",
+  "rubric_version": "v2",
+  "fault_id": "F4",
+  "fault_class": "配置类变更",
+  "root_cause_accuracy": 1,
+  "accuracy_tier": "hit",
+  "deployment_attribution": "excluded",
+  "deployment_attribution_correct": "correct",
+  "deployment_expected": "excluded",
+  "criteria": [
+    {
+      "id": "F4-C1",
+      "name": "根因定位到运行时旋钮/配置层，并指认它为触发源",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…## 【根因假设】 **置信度：0.95** **机制**：容器重建时随环境注入的 `DOWNSTREAM_TIMEOUT_MS=1`（1 毫秒）把 `RestTemplate` 的 connect/read timeout 压到 1ms，导致 `OrderService.loadOrder` 内部发往…"
+    },
+    {
+      "id": "F4-C2",
+      "name": "识别失效机制链：读超时 → fetchProfile 返回 null → 未判空 → NPE → 500",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…//127.0.0.1:8080/profiles/{userId}` 的自调用读超时；`DownstreamClient.fetchProfile` 捕获异常后 `…"
+    }
+  ],
+  "deployment_checks": [
+    {
+      "id": "F4-D1",
+      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "result": "PASS",
+      "evidence": "…ile == null` 时必然 NPE。这解释了**失效链的第二段**，但**不是本次故障的触发因**（该提交4 天前就已上线，且上一容器从 02:12:00 跑到 03:50:…"
+    },
+    {
+      "id": "F4-D2",
+      "name": "报告把发布/代码变更说成触发源",
+      "result": "FAIL",
+      "evidence": null
+    }
+  ],
+  "quality": [
+    {
+      "id": "Q1",
+      "name": "给出三个锚点（告警 / 异常首现 / 部署）",
+      "scope": "anchors",
+      "result": "PASS",
+      "evidence": "…``` 服务：target-service ｜ 严重级：critical ｜ 告警起始：2026-10-30T03:51:19.991948342Z ``` *…"
+    },
+    {
+      "id": "Q2",
+      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "scope": "whole",
+      "result": "PASS",
+      "evidence": "…null` 时必然 NPE。这解释了**失效链的第二段**，但**不是本次故障的触发因**（该提交4 天前就已上线，且上一容器从 02:12:00 跑到 03:50:…"
+    },
+    {
+      "id": "Q3",
+      "name": "排除的假设达到 3 条以上",
+      "scope": "excluded",
+      "result": "PASS",
+      "evidence": "（本节列出 8 条：表格行 8）"
+    },
+    {
+      "id": "Q4",
+      "name": "列出反对证据 / 尚未解释项",
+      "scope": "against",
+      "result": "PASS",
+      "evidence": "…## 【反对证据 / 尚未解释】 1. **下游服务本身完全正常，与\"故障在下游\"不矛盾但需说明**：本次故…"
+    }
+  ],
+  "needs_review": []
+}

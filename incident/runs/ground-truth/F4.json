@@ -1,0 +1,105 @@
+{
+  "fault_id": "F4",
+  "fault_class": "配置类变更",
+  "title": "下游读超时：RestTemplate 超时旋钮 DOWNSTREAM_TIMEOUT_MS 由 2000ms 调小到 1ms，容器重建后生效",
+  "expectation": "根因必须落在运行时配置层。代码变更（删判空兜底）是本次故障的**必要条件**，但不是触发源——触发源是超时旋钮那一次改动。报告若把发布说成触发源，即为过度归因。",
+  "ground_truth": {
+    "trigger": "运行时旋钮 DOWNSTREAM_TIMEOUT_MS 2000ms → 1ms（改配置 + 重建容器生效）",
+    "necessary_condition": "commit 删除了 OrderService.loadOrder 的 profile 判空兜底",
+    "amplifier": "订单端点与负载探针共用同一条被压到 1ms 的出站路径",
+    "mechanism": "回环调用耗时 ~2.5ms > 1ms 预算 → Read timed out → fetchProfile 返回 null → 未判空解引用 → NPE → HTTP 500",
+    "not_the_trigger": "最近一次代码变更/发布（提交时间距首个异常约 20 小时，远超 15 分钟窗口；窗口内无代码变更）"
+  },
+  "accuracy": {
+    "hit": {
+      "all": [
+        {
+          "id": "F4-C1",
+          "name": "根因定位到运行时旋钮/配置层，并指认它为触发源",
+          "section": "root_cause",
+          "all_of": [
+            "(触发源|触发因|根因|直接致因|根本原因|机制)[^\\n]{0,160}(DOWNSTREAM_TIMEOUT_MS|超时旋钮|timeout|运行时旋钮|运行时配置|配置层)|(DOWNSTREAM_TIMEOUT_MS|超时旋钮|timeout|运行时旋钮|运行时配置|配置层)[^\\n]{0,160}(触发源|触发因|根因|直接致因|根本原因|机制)"
+          ]
+        },
+        {
+          "id": "F4-C2",
+          "name": "识别失效机制链：读超时 → fetchProfile 返回 null → 未判空 → NPE → 500",
+          "section": "root_cause",
+          "all_of": [
+            "Read timed out|读超时|超时",
+            "(返回|折叠|变成|降级|转成|映射为|归并|产出)[^。\\n]{0,12}null|return\\s+null",
+            "判空|兜底|未判空|无判空|null\\s*保护|null\\s*检查|null\\s*校验|null\\s*判断|null\\s*防护|空值检查|空值判断|空判断|空指针检查|直接解引用|裸解引用|解引用\\s*null",
+            "NullPointer|NPE"
+          ]
+        }
+      ]
+    },
+    "partial": {
+      "all": [
+        {
+          "id": "F4-C1",
+          "name": "根因定位到运行时旋钮/配置层，并指认它为触发源",
+          "section": "root_cause",
+          "all_of": [
+            "(触发源|触发因|根因|直接致因|根本原因|机制)[^\\n]{0,160}(DOWNSTREAM_TIMEOUT_MS|超时旋钮|timeout|运行时旋钮|运行时配置|配置层)|(DOWNSTREAM_TIMEOUT_MS|超时旋钮|timeout|运行时旋钮|运行时配置|配置层)[^\\n]{0,160}(触发源|触发因|根因|直接致因|根本原因|机制)"
+          ]
+        }
+      ]
+    },
+    "miss": {
+      "all": []
+    }
+  },
+  "deployment_attribution": {
+    "expected": "excluded",
+    "expected_meaning": "发布/代码变更不是本次故障的触发源（它是必要条件）",
+    "says_not_trigger": {
+      "id": "F4-D1",
+      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "section": "whole",
+      "all_of": [
+        "排除[^。\\n]{0,40}(触发源|触发因)|(不是|并非|非)[^。\\n]{0,20}(触发源|触发因)|(必要条件|前提条件)[^。\\n]{0,80}(commit|提交|代码变更|发布|部署)|(发布|代码变更|代码缺陷|commit|提交|部署|上线)[^|\\n]{0,50}\\|[^|\\n]{0,8}(排除|不是触发因|非触发因)"
+      ]
+    },
+    "says_is_trigger": {
+      "id": "F4-D2",
+      "name": "报告把发布/代码变更说成触发源",
+      "section": "root_cause",
+      "all_of": [
+        "(触发源|根因|直接致因|根本原因|机制)[^\\n]{0,120}(commit|提交|代码变更|重新引入|回滚)"
+      ]
+    }
+  },
+  "quality": [
+    {
+      "id": "Q1",
+      "name": "给出三个锚点（告警 / 异常首现 / 部署）",
+      "section": "anchors",
+      "all_of": ["告警|activeAt", "首次|首现", "部署|重建|上线|容器启动"]
+    },
+    {
+      "id": "Q2",
+      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "section": "whole",
+      "all_of": ["触发因素|触发源|触发因|触发条件|必要条件|前提条件|前置条件|前置缺陷|放大条件|放大器|放大因子"],
+      "min_count": { "pattern": "触发因素|触发源|触发因|触发条件|必要条件|前提条件|前置条件|前置缺陷|放大条件|放大器|放大因子", "n": 2 }
+    },
+    {
+      "id": "Q3",
+      "name": "排除的假设达到 3 条以上",
+      "section": "excluded",
+      "min_items": 3
+    },
+    {
+      "id": "Q4",
+      "name": "列出反对证据 / 尚未解释项",
+      "section": "against",
+      "all_of": ["未解释|尚未解释|无法|未能|缺口|存疑|不完整"]
+    }
+  ],
+  "near_miss_wording": [
+    "运行时参数|环境变量|生效值",
+    "超时预算|预算被压",
+    "不再降级|没有降级"
+  ]
+}

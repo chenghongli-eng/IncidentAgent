@@ -1,0 +1,54 @@
+{
+  "stamp": "2026-10-30T0418Z",
+  "fault": "F4",
+  "started_at": "2026-10-30T04:18:49.014Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（3332181 → 3332520 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（5569 分钟前）：072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": null,
+  "settle": null,
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "channel_audit": null,
+  "restore": null,
+  "score": null,
+  "round_valid": true,
+  "invalid_reason": null,
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0418Z.json",
+  "finished_at": "2026-10-30T04:18:52.544Z"
+}

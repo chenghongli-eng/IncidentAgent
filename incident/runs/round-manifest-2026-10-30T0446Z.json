@@ -1,0 +1,85 @@
+{
+  "stamp": "2026-10-30T0446Z",
+  "fault": "F2",
+  "started_at": "2026-10-30T04:46:36.206Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（8524498 → 8524950 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD（5597 分钟前）：072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": {
+    "source_restored": "F2 restored and committed at 7bb726a\nnow rebuild and redeploy:  ./lab.sh build target-service",
+    "load_paths": "/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5",
+    "note": "静默态：判空兜底在代码里（缺陷没上线），order 2 一直在压测路径里"
+  },
+  "settle": {
+    "knob_file_mtime": "2026-10-30T04:46:39.597Z",
+    "container_started_at": "2026-10-30T04:50:53.068Z",
+    "settle_ms": 960000,
+    "settle_basis": "2026-10-30T04:50:53.068Z",
+    "waited_ms": 946334
+  },
+  "injection": {
+    "fault": "F2",
+    "at": "2026-10-30T05:06:53.168Z",
+    "commit": "486fb57 2026-10-30T13:06:53+08:00 feat(order): enrich response with downstream shipping address",
+    "changed": [
+      "代码"
+    ],
+    "unchanged": [
+      "运行时旋钮",
+      "压测路径",
+      "数据"
+    ],
+    "note": "一次提交把判空兜底删掉，重建容器后生效；压测路径全程没动"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-10-30T05:07:49.991948342Z",
+    "value": "8.227848101265824e-02",
+    "observed_at": "2026-10-30T05:08:24.279Z"
+  },
+  "agent": null,
+  "channel_audit": null,
+  "restore": null,
+  "score": null,
+  "round_valid": false,
+  "invalid_reason": "本轮中止：Agent 没有产出任何文本（exit 0）：\nundefined",
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0446Z.json",
+  "finished_at": "2026-10-30T05:12:46.865Z",
+  "aborted": "Agent 没有产出任何文本（exit 0）：\nundefined",
+  "aborted_stack": "Error: Agent 没有产出任何文本（exit 0）：\nundefined\n    at fail (file://<repo>/incident/runs/run-round.mjs:175:9)\n    at main (file://<repo>/incident/runs/run-round.mjs:584:5)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+}

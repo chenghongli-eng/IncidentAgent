@@ -3,10 +3,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-const require = createRequire('/persistent/home/fs-user/IdeaProjects/ai_coding/study/miniclaw-main/miniclaw-main/');
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const require = createRequire(`${ROOT}/`);
 const Database = require('better-sqlite3');
 
-const ROOT = '/persistent/home/fs-user/IdeaProjects/ai_coding/study/miniclaw-main/miniclaw-main';
 const secret = fs.readFileSync(`${ROOT}/data/config/session-secret.key`, 'utf8').trim();
 const db = new Database(`${ROOT}/data/db/messages.db`, { readonly: true });
 const row = db
