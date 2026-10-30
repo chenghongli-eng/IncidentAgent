@@ -104,11 +104,33 @@ function scrubTombstone(itemId) {
   console.log(`scrub ${itemId} -> 正文已清空（原文 ${row.content.length} 字）`);
 }
 
-const lesson = memory
-  .getWorkspaceMemory({ actor: ACTOR, workspaceJid: WORKSPACE_JID, itemId: LESSON_ID })
-  .item;
+function getMemoryOrNull(itemId) {
+  try {
+    return memory.getWorkspaceMemory({ actor: ACTOR, workspaceJid: WORKSPACE_JID, itemId }).item ?? null;
+  } catch {
+    return null;
+  }
+}
 
-if (lesson.content === LESSON_CONTENT) {
+const lesson = getMemoryOrNull(LESSON_ID);
+
+if (lesson === null) {
+  // POST /api/groups/:jid/clear-history 会连带清掉工作区记忆（不只是聊天记录），
+  // 所以「去泄漏」这一步必须是**可重入**的：条目没了就按清理后的形态重建。
+  const created = memory.createWorkspaceMemory({
+    actor: ACTOR,
+    workspaceJid: WORKSPACE_JID,
+    sourceType: SOURCE_TYPE,
+    kind: 'lesson',
+    title: LESSON_PATCH.title,
+    content: LESSON_CONTENT,
+    canonicalKey: LESSON_PATCH.canonicalKey,
+    status: 'active',
+    importance: LESSON_PATCH.importance,
+    confidence: LESSON_PATCH.confidence,
+  });
+  console.log(`create -> 新建清理后的 lesson id=${created.item.id}`);
+} else if (lesson.content === LESSON_CONTENT) {
   console.log(`update ${LESSON_ID} -> 已是清理后的形态，跳过`);
 } else {
   const updated = memory.updateWorkspaceMemory({
@@ -124,11 +146,13 @@ if (lesson.content === LESSON_CONTENT) {
   );
 }
 
-const openLoop = memory
-  .getWorkspaceMemory({ actor: ACTOR, workspaceJid: WORKSPACE_JID, itemId: OPEN_LOOP_ID })
-  .item;
+// open_loop 是「带答案」的那条，只能作废、**不能重建**。
+// 记忆被 clear-history 清掉后它就不存在了——那正是我们想要的状态。
+const openLoop = getMemoryOrNull(OPEN_LOOP_ID);
 
-if (openLoop.status === 'deleted') {
+if (openLoop === null) {
+  console.log(`forget ${OPEN_LOOP_ID} -> 不存在（已被清掉），无需作废`);
+} else if (openLoop.status === 'deleted') {
   console.log(`forget ${OPEN_LOOP_ID} -> 已作废，跳过`);
 } else {
   forget(
@@ -136,6 +160,5 @@ if (openLoop.status === 'deleted') {
     openLoop.revision,
     '状态已过期（故障早已恢复）且内容写死了上一轮的失效机制与旋钮值，等于发答案；整条作废。',
   );
+  scrubTombstone(OPEN_LOOP_ID);
 }
-
-scrubTombstone(OPEN_LOOP_ID);

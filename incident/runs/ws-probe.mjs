@@ -1,5 +1,8 @@
-import WebSocket from '/persistent/home/fs-user/IdeaProjects/ai_coding/study/miniclaw-main/miniclaw-main/node_modules/ws/index.js';
 import fs from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const { default: WebSocket } = await import(`${ROOT}/node_modules/ws/index.js`);
 const cookie = fs.readFileSync('/tmp/mc-cookie.txt','utf8').trim();
 const chatJid = process.argv[2];
 const content = fs.readFileSync(process.argv[3],'utf8');

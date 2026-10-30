@@ -1,0 +1,77 @@
+{
+  "report": "agent-report-2026-10-27T0727Z.md",
+  "ground_truth": "ground-truth/F4.json",
+  "rubric_version": "v2",
+  "fault_id": "F4",
+  "fault_class": "配置类变更",
+  "root_cause_accuracy": 1,
+  "accuracy_tier": "hit",
+  "deployment_attribution": "excluded",
+  "deployment_attribution_correct": "correct",
+  "deployment_expected": "excluded",
+  "criteria": [
+    {
+      "id": "F4-C1",
+      "name": "根因定位到运行时旋钮/配置层，并指认它为触发源",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…### 【根因假设】 **置信度：0.92** **机制**：运行时旋钮 `DOWNSTREAM_TIMEOUT_MS` 被改到 **1 毫秒**（旋钮文件最后修改 07:24:20.061Z…"
+    },
+    {
+      "id": "F4-C2",
+      "name": "识别失效机制链：读超时 → fetchProfile 返回 null → 未判空 → NPE → 500",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…5ms，客户端主动中断 → `ResourceAccessException: Read timed out` → `DownstreamClient.fetchProfile` 捕获后返…"
+    }
+  ],
+  "deployment_checks": [
+    {
+      "id": "F4-D1",
+      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "result": "PASS",
+      "evidence": "…9.509Z）**20 小时 55 分**，远超 15 分钟窗口 → 按规则**排除该发布作为本次故障的触发源**。但它不是无关变更，见下一步。 ## 步骤 5 · Git diff（已执…"
+    },
+    {
+      "id": "F4-D2",
+      "name": "报告把发布/代码变更说成触发源",
+      "result": "FAIL",
+      "evidence": null
+    }
+  ],
+  "quality": [
+    {
+      "id": "Q1",
+      "name": "给出三个锚点（告警 / 异常首现 / 部署）",
+      "scope": "anchors",
+      "result": "PASS",
+      "evidence": "…锚点 | 时间 (UTC) | 来源 | |---|---|---| | ① 告警起始 | **2026-10-27T07:24:49.991948342Z**（…"
+    },
+    {
+      "id": "Q2",
+      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "scope": "whole",
+      "result": "PASS",
+      "evidence": "…小时 55 分**，远超 15 分钟窗口 → 按规则**排除该发布作为本次故障的触发源**。但它不是无关变更，见下一步。 ## 步骤 5 · Git diff（已执…"
+    },
+    {
+      "id": "Q3",
+      "name": "排除的假设达到 3 条以上",
+      "scope": "excluded",
+      "result": "PASS",
+      "evidence": "（本节列出 6 条：表格行 6）"
+    },
+    {
+      "id": "Q4",
+      "name": "列出反对证据 / 尚未解释项",
+      "scope": "against",
+      "result": "PASS",
+      "evidence": "…### 【反对证据 / 尚未解释】 1. **日志里没有完整堆栈**（`logs grep 'at java.b…"
+    }
+  ],
+  "needs_review": []
+}

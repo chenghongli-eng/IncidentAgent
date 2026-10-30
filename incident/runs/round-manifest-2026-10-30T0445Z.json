@@ -1,0 +1,56 @@
+{
+  "stamp": "2026-10-30T0445Z",
+  "fault": "F2",
+  "started_at": "2026-10-30T04:45:59.683Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（8519407 → 8519746 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD（5597 分钟前）：072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": null,
+  "settle": null,
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "channel_audit": null,
+  "restore": null,
+  "score": null,
+  "round_valid": false,
+  "invalid_reason": "本轮中止：faults.mjs restore F2 失败：\nnode:internal/modules/cjs/loader:1386\n  throw err;\n  ^\n\nError: Cannot find module '<repo>/incident/incident/faults/faults.mjs'\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)\n    at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)\n    at Function._load (node:internal/modules/cjs/loader:1192:37)\n    at TracingChannel.traceSync (node:diagnostics_channel:322:14)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)\n    at node:internal/main/run_main_module:36:49 {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: []\n}\n\nNode.js v22.19.0",
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0445Z.json",
+  "finished_at": "2026-10-30T04:46:03.052Z",
+  "aborted": "faults.mjs restore F2 失败：\nnode:internal/modules/cjs/loader:1386\n  throw err;\n  ^\n\nError: Cannot find module '<repo>/incident/incident/faults/faults.mjs'\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)\n    at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)\n    at Function._load (node:internal/modules/cjs/loader:1192:37)\n    at TracingChannel.traceSync (node:diagnostics_channel:322:14)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)\n    at node:internal/main/run_main_module:36:49 {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: []\n}\n\nNode.js v22.19.0",
+  "aborted_stack": "Error: faults.mjs restore F2 失败：\nnode:internal/modules/cjs/loader:1386\n  throw err;\n  ^\n\nError: Cannot find module '<repo>/incident/incident/faults/faults.mjs'\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)\n    at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)\n    at Function._load (node:internal/modules/cjs/loader:1192:37)\n    at TracingChannel.traceSync (node:diagnostics_channel:322:14)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)\n    at node:internal/main/run_main_module:36:49 {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: []\n}\n\nNode.js v22.19.0\n    at fail (file://<repo>/incident/runs/run-round.mjs:173:9)\n    at Object.setup (file://<repo>/incident/runs/run-round.mjs:325:31)\n    at main (file://<repo>/incident/runs/run-round.mjs:494:31)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+}

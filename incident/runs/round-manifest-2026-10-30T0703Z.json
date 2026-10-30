@@ -1,0 +1,103 @@
+{
+  "stamp": "2026-10-30T0703Z",
+  "fault": "F2",
+  "started_at": "2026-10-30T07:03:19.255Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（15397368 → 15398038 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD（137 分钟前）：7bb726a 2026-10-30T12:46:39+08:00 fix(order): tolerate missing downstream profile"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=<provider> model=<model>"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": {
+    "source_restored": "F2 is not injected; nothing to restore",
+    "load_paths": "/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5",
+    "note": "静默态：判空兜底在代码里（缺陷没上线），order 2 一直在压测路径里"
+  },
+  "settle": {
+    "knob_file_mtime": "2026-10-30T07:03:22.609Z",
+    "container_started_at": "2026-10-30T06:50:03.667Z",
+    "settle_ms": 960000,
+    "settle_basis": "2026-10-30T07:03:22.609Z",
+    "waited_ms": 957683
+  },
+  "injection": {
+    "fault": "F2",
+    "at": "2026-10-30T07:19:22.709Z",
+    "commit": "f24ecb8 2026-10-30T15:19:22+08:00 feat(order): enrich response with downstream shipping address",
+    "changed": [
+      "代码"
+    ],
+    "unchanged": [
+      "运行时旋钮",
+      "压测路径",
+      "数据"
+    ],
+    "note": "一次提交把判空兜底删掉，重建容器后生效；压测路径全程没动"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-10-30T07:20:04.991948342Z",
+    "value": "9.411428108924104e-02",
+    "observed_at": "2026-10-30T07:20:47.024Z"
+  },
+  "agent": null,
+  "channel_audit": null,
+  "restore": {
+    "ok": true,
+    "at": "2026-10-30T07:35:47.091Z",
+    "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5"
+  },
+  "score": null,
+  "round_valid": false,
+  "invalid_reason": "本轮中止：Agent 没有产出任何文本（exit 0）：\n（ws-run 没有输出，也没有 stderr）",
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0703Z.json",
+  "provider": {
+    "defaultProviderId": "<provider-id>",
+    "name": "<provider>",
+    "model": "<model>",
+    "enabledCount": 1
+  },
+  "abort_stop": {
+    "status": 200
+  },
+  "finished_at": "2026-10-30T07:36:41.583Z",
+  "aborted": "Agent 没有产出任何文本（exit 0）：\n（ws-run 没有输出，也没有 stderr）",
+  "aborted_stack": "Error: Agent 没有产出任何文本（exit 0）：\n（ws-run 没有输出，也没有 stderr）\n    at fail (file://<repo>/incident/runs/run-round.mjs:181:9)\n    at main (file://<repo>/incident/runs/run-round.mjs:624:5)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+}

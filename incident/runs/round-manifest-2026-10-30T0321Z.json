@@ -1,0 +1,55 @@
+{
+  "stamp": "2026-10-30T0321Z",
+  "fault": "F4",
+  "started_at": "2026-10-30T03:21:58.517Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：incident-prometheus, incident-alertmanager, target-service"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（617384 → 617723 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "旋钮在基线（DOWNSTREAM_TIMEOUT_MS=2000）"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "order1=200、order2=500（F2 缺陷已部署且沉默）"
+    },
+    {
+      "id": "P6",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P7",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（5513 分钟前）：072d275 2026-10-26T15:29:26+08:00 fix(tool): keep `git file` reads inside the repository root"
+    }
+  ],
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "restore": null,
+  "score": null,
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0321Z.json",
+  "finished_at": "2026-10-30T03:22:02.318Z",
+  "aborted": "命令失败 (exit 1): node incident/runs/mc-auth.mjs\nnode:internal/modules/cjs/loader:1454\n  return process.dlopen(module, path.toNamespacedPath(filename));\n                 ^\n\nError: The module '<repo>/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build/Release/better_sqlite3.node'\nwas compiled against a different Node.js version using\nNODE_MODULE_VERSION 127. This version of Node.js requires\nNODE_MODULE_VERSION 115. Please try re-compiling or re-installing\nthe module (for instance, using `npm rebuild` or `npm install`).\n    at Module._extensions..node (node:internal/modules/cjs/loader:1454:18)\n    at Module.load (node:internal/modules/cjs/loader:1208:32)\n    at Module._load (node:internal/modules/cjs/loader:1024:12)\n    at Module.require (node:internal/modules/cjs/loader:1233:19)\n    at require (node:internal/modules/helpers:179:18)\n    at bindings (<repo>/node_modules/.pnpm/bindings@1.5.0/node_modules/bindings/bindings.js:112:48)\n    at new Database (<repo>/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/lib/database.js:48:64)\n    at file://<repo>/incident/runs/mc-auth.mjs:13:12\n    at ModuleJob.run (node:internal/modules/esm/module_job:222:25)\n    at async ModuleLoader.import (node:internal/modules/esm/loader:316:24) {\n  code: 'ERR_DLOPEN_FAILED'\n}\n\nNode.js v20.15.1"
+}
