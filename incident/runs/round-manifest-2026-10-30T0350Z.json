@@ -76,7 +76,7 @@
   "restore": null,
   "score": {
     "path": "<repo>/incident/runs/score-2026-10-30T0350Z.json",
-    "rubric_version": "v3",
+    "rubric_version": "v5",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",
@@ -87,5 +87,58 @@
   "manifest_path": "<repo>/incident/runs/round-manifest-2026-10-30T0350Z.json",
   "preflight_note": "P6 的 order2 探针本身会产生 1 次 500，1 分钟窗口后自然衰减出比例分子；P5 因此排在它前面测。",
   "finished_at": "2026-10-30T03:57:21.516Z",
-  "aborted": "fetch failed"
+  "aborted": "fetch failed",
+  "channel_audit": {
+    "transcript": "<repo>/data/sessions/flow-mvkttud1-ah1b/.claude/sessions/2026-10-30T03-51-58-391Z_01a18aef-90b7-7fac-9989-3d0f17daead3.jsonl",
+    "tool_calls": 47,
+    "contaminating": 1,
+    "out_of_surface": 4,
+    "stale_path_uses": 0,
+    "verdict": "contaminated",
+    "findings": [
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "curl/wget",
+        "why": "直连监控面，绕过了只读工具（只读工具缺对应子命令时可以接受，但要披露）",
+        "at": "2026-10-30T03:52:42.545Z",
+        "excerpt": "cd <repo>/incident/workspace && echo \"PROMETHEUS_URL=${PROMETHEUS_URL:-http://127.0.0.1:9090}\" && echo \"=== rules ===\" && curl -s \"${PROMETHEUS_URL:-h"
+      },
+      {
+        "level": "contaminating",
+        "tool": "bash",
+        "token": ".config/miniclaw-lab",
+        "why": "旋钮文件是运维面，生效值只应通过只读通道 `runtime env` 取得；直读它绕过了通道",
+        "at": "2026-10-30T03:53:30.029Z",
+        "excerpt": "cd <repo>/incident/workspace && echo \"=== git log (last 15, UTC) ===\" && node tools/incident-readonly.mjs git log --limit 15 2>&1 && echo && echo \"==="
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<home>/.config/miniclaw-lab/lab.env",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-10-30T03:53:30.029Z",
+        "excerpt": "cd <repo>/incident/workspace && echo \"=== git log (last 15, UTC) ===\" && node tools/incident-readonly.mjs git log --limit 15 2>&1 && echo && echo \"==="
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-10-30T03:53:55.797Z",
+        "excerpt": "cd <repo>/incident && ls -la && echo \"=== compose (if any) ===\" && find . -maxdepth 2 -name \"docker-compose*.yml\" -o -maxdepth 2 -name \"lab.sh\" -o -ma"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-10-30T03:54:10.352Z",
+        "excerpt": "cd <repo>/incident && echo \"=== docker-compose.yml ===\" && cat -n docker-compose.yml && echo && echo \"=== lab.sh ===\" && cat -n lab.sh"
+      }
+    ]
+  },
+  "round_valid": false,
+  "invalid_reason": "通道污染：Agent 直读旋钮文件 ~/.config/miniclaw-lab/lab.env，绕过了 runtime env 通道",
+  "channel_audit_note": "2026-11-02 补记：这一轮当时没写审计记录（runner 版本更老），现用修好的 channel-audit.mjs 补跑，结果是污染 1 处（Agent 直读旋钮文件，绕过了 runtime env 通道）。原件与脱敏件的判定一致，两边都是污染 1 / 越界 4。"
 }

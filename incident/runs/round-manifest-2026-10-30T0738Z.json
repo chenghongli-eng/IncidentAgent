@@ -89,7 +89,7 @@
     "transcript": "<repo>/data/sessions/flow-mvkttud1-ah1b/.claude/sessions/2026-10-30T07-55-36-536Z_01a18bce-9ed8-7f57-b14b-2adcfdad5a03.jsonl",
     "tool_calls": 47,
     "contaminating": 0,
-    "out_of_surface": 9,
+    "out_of_surface": 10,
     "stale_path_uses": 0,
     "verdict": "out_of_surface",
     "findings": [
@@ -124,6 +124,14 @@
         "why": "绝对路径在证据面之外",
         "at": "2026-10-30T07:55:56.422Z",
         "excerpt": "cd <repo>/data/skills/68fcc7c5-f8ca-4265-acd5-f215f5aa24a4; for d in deployment-window log-triage git-diff-analysis historical-incident-lookup root-ca"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident/faults",
+        "why": "枚举了答案键（只列名字，没有读到内容）：故障定义 = 出题方的答案键",
+        "at": "2026-10-30T07:56:14.469Z",
+        "excerpt": "cd <repo>/incident; ls -la agent-profile faults skills 2>/dev/null; echo \"=== agent-profile files (names only) ===\"; ls agent-profile"
       },
       {
         "level": "out_of_surface",
@@ -174,7 +182,7 @@
   },
   "score": {
     "path": "<repo>/incident/runs/score-2026-10-30T0738Z.json",
-    "rubric_version": "v3",
+    "rubric_version": "v5",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",
@@ -191,5 +199,6 @@
     "model": "<model>",
     "enabledCount": 1
   },
-  "finished_at": "2026-10-30T08:08:07.447Z"
+  "finished_at": "2026-10-30T08:08:07.447Z",
+  "channel_audit_note": "2026-11-02 用修好的 channel-audit.mjs 重跑：污染仍是 0 处，越界从 9 变成 10——多出来的那一条是 Agent 在 incident/ 下 `ls -la faults`（只列了目录名，没读内容）。它算越界不算污染：这一轮 Agent 在自己的思考里写明「我已经列过目录名了，但不去读内容」，人工复核件（runs/audit-2026-10-30T0738Z.md §2.5）也独立判过同一件事为「无一读到答案、零污染」，两边口径一致。原件与脱敏件的判定一致，两边都是污染 0 / 越界 10。"
 }

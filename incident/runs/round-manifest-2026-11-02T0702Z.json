@@ -1,0 +1,187 @@
+{
+  "stamp": "2026-11-02T0702Z",
+  "fault": "F2",
+  "started_at": "2026-11-02T07:02:34.668Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（2180408 → 2180861 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD（4456 分钟前）：7bb726a 2026-10-30T12:46:39+08:00 fix(order): tolerate missing downstream profile"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=<provider> model=<model>"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": {
+    "source_restored": "F2 is not injected; nothing to restore",
+    "load_paths": "/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5",
+    "note": "静默态：判空兜底在代码里（缺陷没上线），order 2 一直在压测路径里"
+  },
+  "settle": {
+    "knob_file_mtime": "2026-11-02T07:02:37.966Z",
+    "container_started_at": "2026-11-02T07:02:39.399Z",
+    "settle_ms": 960000,
+    "settle_basis": "2026-11-02T07:02:39.399Z",
+    "waited_ms": 946735
+  },
+  "injection": {
+    "fault": "F2",
+    "at": "2026-11-02T07:18:39.499Z",
+    "commit": "5f12098 2026-11-02T15:18:39+08:00 feat(order): enrich response with downstream shipping address",
+    "changed": [
+      "代码"
+    ],
+    "unchanged": [
+      "运行时旋钮",
+      "压测路径",
+      "数据"
+    ],
+    "note": "一次提交把判空兜底删掉，重建容器后生效；压测路径全程没动"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-11-02T07:19:19.991948342Z",
+    "value": "8.812483480252228e-02",
+    "observed_at": "2026-11-02T07:20:08.945Z"
+  },
+  "agent": {
+    "report": "<repo>/incident/runs/agent-report-2026-11-02T0702Z.md",
+    "started_at": "2026-11-02T07:20:08.945Z",
+    "finished_at": "2026-11-02T07:36:36.487Z",
+    "chars": 7401,
+    "stderr_tail": "run_finished reason=completed\nrun_finished reason=released\n",
+    "transcript": "<repo>/incident/runs/session-transcripts/2026-11-02T07-20-11-234Z_01a19b21-44e2-7a35-852a-a3e4db574902.jsonl"
+  },
+  "channel_audit": {
+    "transcript": "<repo>/data/sessions/flow-mvkttud1-ah1b/.claude/sessions/2026-11-02T07-20-11-234Z_01a19b21-44e2-7a35-852a-a3e4db574902.jsonl",
+    "tool_calls": 69,
+    "contaminating": 2,
+    "out_of_surface": 6,
+    "stale_path_uses": 0,
+    "verdict": "contaminated",
+    "findings": [
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "curl/wget",
+        "why": "直连监控面，绕过了只读工具（只读工具缺对应子命令时可以接受，但要披露）",
+        "at": "2026-11-02T07:20:39.525Z",
+        "excerpt": "cd <repo>/incident/workspace; echo \"PROM_URL=${PROMETHEUS_URL:-http://127.0.0.1:9090}\"; curl -s \"http://127.0.0.1:9090/api/v1/rules\" 2>&1 | head -c 30"
+      },
+      {
+        "level": "contaminating",
+        "tool": "bash",
+        "token": ".config/miniclaw-lab",
+        "why": "旋钮文件是运维面，生效值只应通过只读通道 `runtime env` 取得；直读它绕过了通道",
+        "at": "2026-11-02T07:26:09.459Z",
+        "excerpt": "cd <repo>/incident/workspace; echo \"=== which orders succeed after 07:18:48 ===\"; node \"$INCIDENT_LAB\" logs grep 'loaded for user' --since 2026-11-02T"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<home>/.config/miniclaw-lab/lab.env",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-11-02T07:26:09.459Z",
+        "excerpt": "cd <repo>/incident/workspace; echo \"=== which orders succeed after 07:18:48 ===\"; node \"$INCIDENT_LAB\" logs grep 'loaded for user' --since 2026-11-02T"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/target-service",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-11-02T07:29:34.352Z",
+        "excerpt": "cd <repo>/target-service 2>/dev/null || cd <repo>/incident/workspace/target-service; echo \"=== Order"
+      },
+      {
+        "level": "contaminating",
+        "tool": "bash",
+        "token": ".config/miniclaw-lab",
+        "why": "旋钮文件是运维面，生效值只应通过只读通道 `runtime env` 取得；直读它绕过了通道",
+        "at": "2026-11-02T07:29:34.352Z",
+        "excerpt": "cd <repo>/incident/workspace; echo \"=== knob file full (redacted secrets) ===\"; sed -E 's/(PASSWORD|SECRET|TOKEN|KEY)=.*/\\1=***REDACTED***/I' /home/fs"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<home>/.config/miniclaw-lab/lab.env",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-11-02T07:29:34.352Z",
+        "excerpt": "cd <repo>/incident/workspace; echo \"=== knob file full (redacted secrets) ===\"; sed -E 's/(PASSWORD|SECRET|TOKEN|KEY)=.*/\\1=***REDACTED***/I' /home/fs"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<home>/.config/miniclaw-lab/",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-11-02T07:29:34.352Z",
+        "excerpt": "cd <repo>/incident/workspace; echo \"=== knob file full (redacted secrets) ===\"; sed -E 's/(PASSWORD|SECRET|TOKEN|KEY)=.*/\\1=***REDACTED***/I' /home/fs"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "curl/wget",
+        "why": "直连监控面，绕过了只读工具（只读工具缺对应子命令时可以接受，但要披露）",
+        "at": "2026-11-02T07:34:02.220Z",
+        "excerpt": "cd <repo>/incident/workspace; echo \"=== read timeout ANY time today ===\"; node \"$INCIDENT_LAB\" logs grep 'Read timed out' --since 2026-11-02T00:00:00Z"
+      }
+    ]
+  },
+  "restore": {
+    "ok": true,
+    "at": "2026-11-02T07:36:36.561Z",
+    "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5"
+  },
+  "score": {
+    "path": "<repo>/incident/runs/score-2026-11-02T0702Z.json",
+    "rubric_version": "v5",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "relevant",
+    "deployment_attribution_correct": "correct",
+    "deployment_expected": "relevant",
+    "needs_review": []
+  },
+  "round_valid": false,
+  "invalid_reason": "通道污染：Agent 读到了答案键或绕过了只读通道",
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-11-02T0702Z.json",
+  "provider": {
+    "defaultProviderId": "<provider-id>",
+    "name": "<provider>",
+    "model": "<model>",
+    "enabledCount": 1
+  },
+  "finished_at": "2026-11-02T07:37:34.752Z"
+}

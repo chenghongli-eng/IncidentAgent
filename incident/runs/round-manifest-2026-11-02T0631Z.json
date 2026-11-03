@@ -1,0 +1,65 @@
+{
+  "stamp": "2026-11-02T0631Z",
+  "fault": "F2",
+  "started_at": "2026-11-02T06:31:30.104Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（1731163 → 1731616 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD（4425 分钟前）：7bb726a 2026-10-30T12:46:39+08:00 fix(order): tolerate missing downstream profile"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=<provider> model=<model>"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": null,
+  "settle": null,
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "channel_audit": null,
+  "restore": null,
+  "score": null,
+  "round_valid": true,
+  "invalid_reason": null,
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-11-02T0631Z.json",
+  "provider": {
+    "defaultProviderId": "<provider-id>",
+    "name": "<provider>",
+    "model": "<model>",
+    "enabledCount": 1
+  },
+  "finished_at": "2026-11-02T06:31:33.433Z"
+}

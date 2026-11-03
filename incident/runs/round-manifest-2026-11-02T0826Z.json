@@ -1,0 +1,31 @@
+{
+  "stamp": "2026-11-02T0826Z",
+  "fault": "F2",
+  "started_at": "2026-11-02T08:26:27.971Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    }
+  ],
+  "setup": null,
+  "settle": null,
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "channel_audit": null,
+  "restore": null,
+  "score": null,
+  "round_valid": false,
+  "invalid_reason": "本轮中止：读不到 <repo>/incident/workspace/logs/app.log：stat: 对 '<repo>/incident/workspace/logs/app.log' 调用 statx 失败: 没有那个文件或目录",
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-11-02T0826Z.json",
+  "finished_at": "2026-11-02T08:26:28.213Z",
+  "aborted": "读不到 <repo>/incident/workspace/logs/app.log：stat: 对 '<repo>/incident/workspace/logs/app.log' 调用 statx 失败: 没有那个文件或目录",
+  "aborted_stack": "Error: 读不到 <repo>/incident/workspace/logs/app.log：stat: 对 '<repo>/incident/workspace/logs/app.log' 调用 statx 失败: 没有那个文件或目录\n    at fail (file://<repo>/incident/runs/run-round.mjs:185:9)\n    at main (file://<repo>/incident/runs/run-round.mjs:456:25)\n    at file://<repo>/incident/runs/run-round.mjs:757:1"
+}

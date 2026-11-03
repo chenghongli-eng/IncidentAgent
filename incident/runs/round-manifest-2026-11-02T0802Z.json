@@ -1,0 +1,103 @@
+{
+  "stamp": "2026-11-02T0802Z",
+  "fault": "F2",
+  "started_at": "2026-11-02T08:02:49.341Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（47674 → 48126 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD（4516 分钟前）：7bb726a 2026-10-30T12:46:39+08:00 fix(order): tolerate missing downstream profile"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=<provider> model=<model>"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    }
+  ],
+  "setup": {
+    "source_restored": "F2 is not injected; nothing to restore",
+    "load_paths": "/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5",
+    "note": "静默态：判空兜底在代码里（缺陷没上线），order 2 一直在压测路径里"
+  },
+  "settle": {
+    "knob_file_mtime": "2026-11-02T08:02:52.682Z",
+    "container_started_at": "2026-11-02T08:02:54.617Z",
+    "settle_ms": 960000,
+    "settle_basis": "2026-11-02T08:02:54.617Z",
+    "waited_ms": 946791
+  },
+  "injection": {
+    "fault": "F2",
+    "at": "2026-11-02T08:18:54.718Z",
+    "commit": "78c607c 2026-11-02T16:18:54+08:00 feat(order): enrich response with downstream shipping address",
+    "changed": [
+      "代码"
+    ],
+    "unchanged": [
+      "运行时旋钮",
+      "压测路径",
+      "数据"
+    ],
+    "note": "一次提交把判空兜底删掉，重建容器后生效；压测路径全程没动"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-11-02T08:19:34.991948342Z",
+    "value": "8.812504524276876e-02",
+    "observed_at": "2026-11-02T08:20:23.996Z"
+  },
+  "agent": null,
+  "channel_audit": null,
+  "restore": {
+    "ok": true,
+    "at": "2026-11-02T08:20:24.064Z",
+    "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5"
+  },
+  "score": null,
+  "round_valid": false,
+  "invalid_reason": "本轮中止：Agent 没有产出任何文本（exit 0）：\nsocket connect ECONNREFUSED 127.0.0.1:3000\nno agent_reply (socket error)\n",
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-11-02T0802Z.json",
+  "provider": {
+    "defaultProviderId": "<provider-id>",
+    "name": "<provider>",
+    "model": "<model>",
+    "enabledCount": 1
+  },
+  "abort_stop": {
+    "error": "请求 http://127.0.0.1:3000/api/groups/web%3A8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb/stop 连续 4 次失败：fetch failed（connect ECONNREFUSED 127.0.0.1:3000）"
+  },
+  "finished_at": "2026-11-02T08:21:22.876Z",
+  "aborted": "Agent 没有产出任何文本（exit 0）：\nsocket connect ECONNREFUSED 127.0.0.1:3000\nno agent_reply (socket error)\n",
+  "aborted_stack": "Error: Agent 没有产出任何文本（exit 0）：\nsocket connect ECONNREFUSED 127.0.0.1:3000\nno agent_reply (socket error)\n\n    at fail (file://<repo>/incident/runs/run-round.mjs:185:9)\n    at main (file://<repo>/incident/runs/run-round.mjs:628:5)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+}
