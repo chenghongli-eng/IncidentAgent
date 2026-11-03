@@ -53,8 +53,55 @@ import { pathToFileURL } from 'node:url';
  *   大把 null），C2 必须仍然 FAIL。
  *
  * 改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变）。
+ *
+ * v3 → v4 改的两处，同一个毛病：**判据量的是排版，不是诊断能力**。
+ *   1. 切段：除契约标记（【根因假设】…）外，也认**同名的 markdown 标题**
+ *      （`## 根因假设`）。2026-11-02T0702Z 那轮的报告把六个字段写成
+ *      markdown 标题、一个契约标记都没有 → 五个字段全判 NO_SECTION，
+ *      整轮打成 0 分——而那份报告把机制链、受控负证据、发布归因全做对了。
+ *      v2 已经把切段从「只认 markdown 标题」改成「认契约标记」，
+ *      但那两种写法**都带【】**；不带【】的 markdown 标题一直切不出来。
+ *      v4 补上这一支：标题只认**标题行**（`^#{1,6}\s+`，且不在代码围栏里），
+ *      去掉标题修饰后**以字段名开头**才算。正文里提到「根因假设」不算数
+ *      （负对照证明：没有结构的报告仍然是 0.0）。
+ *      分数不再量排版，但**偏离契约这件事仍然可见**：
+ *      分数文件里记 `section_style`（契约标记 / markdown 标题 / 混用 / 无）。
+ *   2. C2 的「未判空」词表漏了「空值防护」。这张表本来就是「null 守卫」
+ *      这个概念的枚举（null 保护/检查/校验/判断/防护、空值检查/空值判断/空判断），
+ *      唯独漏掉「空值防护」——是枚举的疏漏，不是刻意的排除。
+ *
+ * **Q2 的层级词表没有改**：0702Z 那轮通篇写「机制」，
+ * 从未区分「触发源 / 必要条件 / 放大条件」——判据本意（分层归因）它没满足，
+ * 那是 Agent 错，不是判据错。
+ *
+ * 改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变）。
+ *
+ * v4 → v5 改的一处，同一个毛病：**判据量的是措辞，不是诊断能力**。
+ *   F2 的三条判据（C1 的两条 all_of、C1 的 all_of[1]、D1）原来都要求报告里出现
+ *   `commit|提交|代码变更|重新引入|revert` 这几个**commit 侧**的字面量。
+ *   但这些判据自己的名字叫「根因定位到代码变更（**发布**），并把它指认为致因」，
+ *   F2 真值也写的是「最近一次**发布**就是触发源」。而同一份真值里的反向判据
+ *   F2-D2 认 `发布|部署|上线`，F4 的 D1 也认 `发布|部署|上线`
+ *   —— **只有 F2 这一族要求 commit 侧的词**，是这一族里的结构不对称。
+ *
+ *   后果实测得到：2026-11-02T0827Z 那轮把触发源写成「**部署** 5f144fa 删除了
+ *   OrderService.loadOrder 中对下游 profile 为空的判空保护」，内容完全满足判据本意
+ *   （根因落在代码变更上、落在发布上、指名了文件与方法、指名了它就是机制），
+ *   模式却一个都没命中 → C1 FAIL、D1 FAIL → 整轮 0.0、发布归因 unclear。
+ *
+ *   改法：把「发布/部署/上线 + **变更动词**」也认作「提到了那次代码变更」。
+ *   带变更动词是硬条件——光说「最近一次发布：08:45:20Z」不算数，
+ *   必须说出这次发布**动了什么**（删除/引入/恢复/回退…）。
+ *   这不是把判据放宽成空白支票，负对照证明：把「发布→变更」这条链抽掉的报告，
+ *   C1 与 D1 仍然必须 FAIL。
+ *
+ *   **Q2 的层级词表仍然没改**：0827Z 那轮通篇只写「机制」，
+ *   从未区分「触发源 / 必要条件 / 放大条件」——判据本意（分层归因）它没满足，
+ *   那是 Agent 错，不是判据错。
+ *
+ *   改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变）。
  */
-const RUBRIC_VERSION = 'v3';
+const RUBRIC_VERSION = 'v5';
 
 /**
  * 报告契约的固定字段。
@@ -68,29 +115,86 @@ const RUBRIC_VERSION = 'v3';
  * 10-27 那轮把同样的字段写成了 markdown 标题，所以旧实现碰巧能用。
  *
  * 两种写法都认：标记行是标题还是围栏里的普通行，不影响切段。
+ *
+ * v4 再加一种：**同名 markdown 标题**（`## 根因假设`）。
+ * 只认标题行（`^#{1,6}\s+`），且不在代码围栏里——
+ * ```bash 块里的 `# 注释` 不是标题（0702Z 那轮的处置建议块里就有）。
+ * 正文里提到「根因假设」不算数。
  */
 const SECTION_MARKERS = [
-  { name: 'root_cause', label: '【根因假设】' },
-  { name: 'support', label: '【支持证据】' },
-  { name: 'against', label: '【反对证据' },
-  { name: 'excluded', label: '【已排除的假设' },
-  { name: 'skipped', label: '【跳过的步骤' },
+  { name: 'root_cause', label: '【根因假设】', heading: '根因假设' },
+  { name: 'support', label: '【支持证据】', heading: '支持证据' },
+  { name: 'against', label: '【反对证据', heading: '反对证据' },
+  { name: 'excluded', label: '【已排除的假设', heading: '已排除的假设' },
+  { name: 'skipped', label: '【跳过的步骤', heading: '跳过的步骤' },
 ];
 
 /** 只当分界、不单独成节的字段。 */
 const BOUNDARY_LABELS = ['【处置建议'];
+const BOUNDARY_HEADINGS = ['处置建议'];
+
+/**
+ * 标题归一：去掉 markdown 修饰与标点，只留可比较的字。
+ *
+ * '## 【已排除的假设及排除依据】' → '已排除的假设及排除依据'
+ * '## 反对证据 / 尚未解释'        → '反对证据尚未解释'
+ */
+function normalizeHeading(text) {
+  return text
+    .replace(/^\s{0,3}#{1,6}\s*/, '')
+    .replace(/[*`_]/g, '')
+    .replace(/[【】（）()：:，,。.、；;！!？?|／/—–\-\s]/g, '');
+}
+
+/**
+ * 找第一个「以 prefix 开头」的 markdown 标题行。
+ *
+ * 代码围栏里的行不算标题——处置建议块里的 `# 1) 回滚…` 是注释。
+ */
+function headingIndex(lines, prefix) {
+  const target = normalizeHeading(prefix);
+  let inFence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = line.match(/^\s{0,3}#{1,6}\s+(.*)$/);
+    if (!m) continue;
+    if (normalizeHeading(m[1]).startsWith(target)) return i;
+  }
+  return -1;
+}
 
 function extractSections(text) {
   const out = {};
   const lines = text.split('\n');
   const firstAt = (label) => lines.findIndex((l) => l.includes(label));
 
-  const bounds = [...SECTION_MARKERS.map((m) => m.label), ...BOUNDARY_LABELS]
-    .map(firstAt)
-    .filter((i) => i >= 0);
+  // 契约标记优先；没有标记才退到同名标题。
+  // 记下每节是用哪种写法找到的——分数不量排版，但偏离契约要看得见。
+  const styles = {};
+  const startOf = (m) => {
+    const byMarker = firstAt(m.label);
+    if (byMarker >= 0) {
+      styles[m.name] = 'contract-marker';
+      return byMarker;
+    }
+    const byHeading = headingIndex(lines, m.heading);
+    if (byHeading >= 0) styles[m.name] = 'markdown-heading';
+    return byHeading;
+  };
+
+  const bounds = [
+    ...SECTION_MARKERS.map(startOf),
+    ...BOUNDARY_LABELS.map(firstAt),
+    ...BOUNDARY_HEADINGS.map((h) => headingIndex(lines, h)),
+  ].filter((i) => i >= 0);
 
   for (const m of SECTION_MARKERS) {
-    const start = firstAt(m.label);
+    const start = startOf(m);
     if (start === -1) {
       out[m.name] = null;
       continue;
@@ -100,6 +204,8 @@ function extractSections(text) {
     for (const b of bounds) if (b > start && b < end) end = b;
     out[m.name] = lines.slice(start, end).join('\n');
   }
+
+  out.sectionStyles = styles;
 
   // 锚点：先认标题；没有标题就退回「包含锚点二字的第一行」
   const anchorHeading = lines.findIndex((l) => /^#+\s*.*锚点/.test(l));
@@ -337,6 +443,21 @@ function scoreDeployment(expected, spec, sections) {
 }
 
 /**
+ * 报告用了哪种写法分节：契约标记 / markdown 标题 / 混用 / 一个都没用上。
+ *
+ * 这不是判据，是**披露**：v4 起分数不再因为排版扣分，
+ * 但偏离 `root-cause-report` 的契约这件事要在分数文件里看得见，
+ * 否则「不量排版」就变成了「不承认排版」。
+ */
+function summarizeSectionStyle(styles) {
+  const vals = Object.values(styles ?? {});
+  if (!vals.length) return 'none';
+  const kinds = new Set(vals);
+  if (kinds.size > 1) return 'mixed';
+  return vals[0];
+}
+
+/**
  * 给一份报告打完整分。抽出来是为了让 calibrate-scorer.mjs 能直接调用，
  * 而不是 fork 一个子进程再解析 stdout——那样断言的是「输出的形状」，
  * 不是「判据的结论」。
@@ -367,6 +488,7 @@ export function scoreReport(report, truth, meta = {}) {
     rubric_version: RUBRIC_VERSION,
     fault_id: truth.fault_id,
     fault_class: truth.fault_class,
+    section_style: summarizeSectionStyle(sections.sectionStyles),
     root_cause_accuracy: accuracy.score,
     accuracy_tier: accuracy.tier,
     deployment_attribution: deployment.verdict,

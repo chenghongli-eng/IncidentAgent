@@ -1,9 +1,10 @@
 {
   "report": "agent-report-2026-10-30T0738Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v3",
+  "rubric_version": "v5",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
+  "section_style": "contract-marker",
   "root_cause_accuracy": 1,
   "accuracy_tier": "hit",
   "deployment_attribution": "relevant",
@@ -17,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…## 【根因假设】置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 nul…"
+      "evidence": "…## 【根因假设】置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 null 保护原样回退，07:54:15.975Z 重建容器将其上线；应用就绪后 1.2 秒，`/api/orders/2`（其 user 9999…"
     },
     {
       "id": "F2-C2",
@@ -40,7 +41,7 @@
       "id": "F2-D1",
       "name": "报告把发布/代码变更说成触发源",
       "result": "PASS",
-      "evidence": "…## 【根因假设】置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 nul…"
+      "evidence": "…## 【根因假设】置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 null 保护原样回退，07:54:15.975Z 重建容器将其上线；应用就绪后 1.2 秒，`/api/orders/2`（其 user 9999…"
     }
   ],
   "quality": [
@@ -75,9 +76,9 @@
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v2",
-    "root_cause_accuracy": 0.5,
-    "accuracy_tier": "partial",
+    "rubric_version": "v4",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
     "deployment_attribution": "relevant",
     "deployment_attribution_correct": "correct"
   }

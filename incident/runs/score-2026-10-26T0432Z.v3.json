@@ -1,0 +1,84 @@
+{
+  "report": "agent-report-2026-10-26T0432Z.md",
+  "ground_truth": "ground-truth/F4.json",
+  "rubric_version": "v3",
+  "fault_id": "F4",
+  "fault_class": "配置类变更",
+  "root_cause_accuracy": 1,
+  "accuracy_tier": "hit",
+  "deployment_attribution": "excluded",
+  "deployment_attribution_correct": "correct",
+  "deployment_expected": "excluded",
+  "criteria": [
+    {
+      "id": "F4-C1",
+      "name": "根因定位到运行时旋钮/配置层，并指认它为触发源",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…return null` → **NPE → 500**。 2. **本次跃升的触发源（运行时配置层）**：`incident/.env` 的 `DOWNSTREAM_TIMEOUT_MS` 被改为 **1（毫秒）**，在 04:29:15 容器重建时生效 →…"
+    },
+    {
+      "id": "F4-C2",
+      "name": "识别失效机制链：读超时 → fetchProfile 返回 null → 未判空 → NPE → 500",
+      "scope": "root_cause",
+      "result": "PASS",
+      "missing_patterns": [],
+      "forbidden_hits": [],
+      "evidence": "…`http://127.0.0.1:8080/profiles/{id}` **读超时** → `fetchProfile` 对**所有** userId 返回 nu…"
+    }
+  ],
+  "deployment_checks": [
+    {
+      "id": "F4-D1",
+      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "result": "PASS",
+      "evidence": "…：0.96** **机制（两层，必须叠加才成立）** 1. **放大器 / 必要条件（代码层）**：commit `eed747c` 再次引入 F2 缺陷——`OrderService.loa…"
+    },
+    {
+      "id": "F4-D2",
+      "name": "报告把发布/代码变更说成触发源",
+      "result": "FAIL",
+      "evidence": null
+    }
+  ],
+  "quality": [
+    {
+      "id": "Q1",
+      "name": "给出三个锚点（告警 / 异常首现 / 部署）",
+      "scope": "anchors",
+      "result": "PASS",
+      "evidence": "…锚点 | 时间 (UTC) | 来源 | |---|---|---| | ① 告警起始时间 | **2026-10-26T04:29:34.991948342Z*…"
+    },
+    {
+      "id": "Q2",
+      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "scope": "whole",
+      "result": "PASS",
+      "evidence": "…**置信度：0.96** **机制（两层，必须叠加才成立）** 1. **放大器 / 必要条件（代码层）**：commit `eed747c` 再次引入 F2…"
+    },
+    {
+      "id": "Q3",
+      "name": "排除的假设达到 3 条以上",
+      "scope": "excluded",
+      "result": "PASS",
+      "evidence": "（本节列出 9 条：bullet 2 / 编号 7）"
+    },
+    {
+      "id": "Q4",
+      "name": "列出反对证据 / 尚未解释项",
+      "scope": "against",
+      "result": "PASS",
+      "evidence": "…## 【反对证据 / 尚未解释】 - **`.env` 的改动是否人为故意，无法判定**。git 无该文件（…"
+    }
+  ],
+  "needs_review": [],
+  "rescored_from": {
+    "rubric_version": "v2",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "excluded",
+    "deployment_attribution_correct": "correct"
+  }
+}
