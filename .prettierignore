@@ -1,0 +1,13 @@
+# 取证件按原样入库：Agent 报告、轮次 manifest、评分件是**证据**，不是文档。
+#
+# 为什么必须排除：证据的价值在于「和仓库外的原件逐字节可比」——
+# 入库件与原件的差异应当只有脱敏（路径 → <repo>/<home>，provider → <provider>，
+# model → <model>）这一项。若被 prettier 重排表格或改写 JSON 数组，
+# 多出来的空白差异就得由审计件去解释「这个差异无害」——
+# 而本项目吃过一次「数字与证据表不一致」的亏，不再给这类解释留位置。
+#
+# 独立复核件（audit-*.md）与本文件（RESUME.md）是我方自己写的说明文，
+# 不在排除范围内，照常格式化。
+incident/runs/agent-report-*.md
+incident/runs/round-manifest-*.json
+incident/runs/score-*.json

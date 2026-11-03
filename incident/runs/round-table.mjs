@@ -232,6 +232,11 @@ for (const r of rows) {
  * 2026-11-02T0702Z 与 2026-11-02T0827Z 两轮**通道污染、本身作废**，但分数
  * 照样进这张表：判据改了，所有轮次都得用同一个版本重打并并列披露；
  * 作废与否是通道审计的事，不是不打分的事。
+ *
+ * 2026-11-03T0324Z 是 provider 换成 deepseek 之后的第一轮，它只测过 v5，
+ * v2/v3/v4 那一列是空的——那一轮之前的 rubric 已经改过好几版，
+ * 补测旧 rubric 也换不回同一个模型，只能缺着，不能假装有。
+ * 换个模型出分不等于换了标尺：这行只说明「同一份报告在 v1 口径下也是几分」。
  */
 const REPORTS = [
   ['2026-10-26T0222Z', 'F2'],
@@ -243,25 +248,32 @@ const REPORTS = [
   ['2026-10-30T0738Z', 'F2'],
   ['2026-11-02T0702Z', 'F2'],
   ['2026-11-02T0827Z', 'F2'],
+  ['2026-11-03T0324Z', 'F2'],
 ];
 
-console.log('\n### 新旧判据分数并列（v1 重放 / v2 实测 / v3 实测 / v4 实测 / v5 实测）\n');
+console.log(
+  '\n### 新旧判据分数并列（v1 重放 / v2 实测 / v3 实测 / v4 实测 / v5 实测）\n',
+);
 console.log(
   '| 轮次 | 故障 | v1 准确率 | v1 发布归因 | v2 准确率 | v2 发布归因 | v3 准确率 | v3 发布归因 | v4 准确率 | v4 发布归因 | v5 准确率 | v5 发布归因 | 差异来源 |',
 );
-console.log('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+console.log(
+  '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+);
 for (const [stamp, faultId] of REPORTS) {
   const reportPath = join(RUNS, `agent-report-${stamp}.md`);
   if (!existsSync(reportPath)) continue;
   const v1 = scoreV1(readFileSync(reportPath, 'utf8'), faultId);
-  const readScore = (p) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null);
+  const readScore = (p) =>
+    existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
   const v2 = readScore(join(RUNS, `score-${stamp}.v2.json`));
   const v3 = readScore(join(RUNS, `score-${stamp}.v3.json`));
   const v4 = readScore(join(RUNS, `score-${stamp}.v4.json`));
   const v5 = readScore(join(RUNS, `score-${stamp}.json`));
   const diff = [];
   if (v5 && v1.accuracy !== v5.root_cause_accuracy) diff.push('v1→v5 准确率');
-  if (v5 && v1.verdict !== v5.deployment_attribution) diff.push('v1→v5 发布归因');
+  if (v5 && v1.verdict !== v5.deployment_attribution)
+    diff.push('v1→v5 发布归因');
   if (v4 && v5 && v4.root_cause_accuracy !== v5.root_cause_accuracy)
     diff.push('v4→v5 准确率');
   if (v4 && v5 && v4.deployment_attribution !== v5.deployment_attribution)

@@ -1,0 +1,168 @@
+{
+  "stamp": "2026-11-03T0324Z",
+  "fault": "F2",
+  "started_at": "2026-11-03T03:24:49.791Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：<repo>/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（941885 → 942337 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD（5678 分钟前）：7bb726a 2026-10-30T12:46:39+08:00 fix(order): tolerate missing downstream profile"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=<provider> model=<model>"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=<repo>/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    },
+    {
+      "id": "P11",
+      "ok": true,
+      "detail": "Miniclaw 服务在线（HTTP 200）"
+    }
+  ],
+  "setup": {
+    "source_restored": "F2 is not injected; nothing to restore",
+    "load_paths": "/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5",
+    "note": "静默态：判空兜底在代码里（缺陷没上线），order 2 一直在压测路径里"
+  },
+  "settle": {
+    "knob_file_mtime": "2026-11-03T03:24:53.072Z",
+    "container_started_at": "2026-11-03T03:24:54.991Z",
+    "settle_ms": 960000,
+    "settle_basis": "2026-11-03T03:24:54.991Z",
+    "waited_ms": 946821
+  },
+  "injection": {
+    "fault": "F2",
+    "at": "2026-11-03T03:40:55.091Z",
+    "commit": "35fb5a3 2026-11-03T11:40:55+08:00 feat(order): enrich response with downstream shipping address",
+    "changed": [
+      "代码"
+    ],
+    "unchanged": [
+      "运行时旋钮",
+      "压测路径",
+      "数据"
+    ],
+    "note": "一次提交把判空兜底删掉，重建容器后生效；压测路径全程没动"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-11-03T03:41:34.991948342Z",
+    "value": "8.227848101265824e-02",
+    "observed_at": "2026-11-03T03:42:18.108Z"
+  },
+  "agent": {
+    "report": "<repo>/incident/runs/agent-report-2026-11-03T0324Z.md",
+    "started_at": "2026-11-03T03:42:18.111Z",
+    "finished_at": "2026-11-03T03:45:19.694Z",
+    "chars": 10073,
+    "stderr_tail": "run_finished reason=completed\nrun_finished reason=released\n",
+    "transcript": "<repo>/incident/runs/session-transcripts/2026-11-03T03-42-20-083Z_01a19f80-2db3-7497-b142-0e829beeccea.jsonl"
+  },
+  "channel_audit": {
+    "transcript": "<repo>/data/sessions/flow-mvkttud1-ah1b/.claude/sessions/2026-11-03T03-42-20-083Z_01a19f80-2db3-7497-b142-0e829beeccea.jsonl",
+    "tool_calls": 46,
+    "contaminating": 0,
+    "out_of_surface": 5,
+    "stale_path_uses": 0,
+    "verdict": "out_of_surface",
+    "findings": [
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident",
+        "why": "相对路径逃出了证据面",
+        "at": "2026-11-03T03:42:21.475Z",
+        "excerpt": "ls -la ..; echo \"---\"; find .. -maxdepth 2 -name \"*.md\" | head -50"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident/agent-profile",
+        "why": "相对路径逃出了证据面",
+        "at": "2026-11-03T03:42:22.872Z",
+        "excerpt": "ls -la ../agent-profile ../tools ../skills; echo \"=== agent-profile ===\"; cat ../agent-profile/* 2>/dev/null | head -200"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident/tools",
+        "why": "相对路径逃出了证据面",
+        "at": "2026-11-03T03:42:22.872Z",
+        "excerpt": "ls -la ../agent-profile ../tools ../skills; echo \"=== agent-profile ===\"; cat ../agent-profile/* 2>/dev/null | head -200"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident/skills",
+        "why": "相对路径逃出了证据面",
+        "at": "2026-11-03T03:42:22.872Z",
+        "excerpt": "ls -la ../agent-profile ../tools ../skills; echo \"=== agent-profile ===\"; cat ../agent-profile/* 2>/dev/null | head -200"
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "<repo>/incident/agent-profile/*",
+        "why": "相对路径逃出了证据面",
+        "at": "2026-11-03T03:42:22.872Z",
+        "excerpt": "ls -la ../agent-profile ../tools ../skills; echo \"=== agent-profile ===\"; cat ../agent-profile/* 2>/dev/null | head -200"
+      }
+    ]
+  },
+  "restore": {
+    "ok": true,
+    "at": "2026-11-03T03:45:19.743Z",
+    "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5"
+  },
+  "score": {
+    "path": "<repo>/incident/runs/score-2026-11-03T0324Z.json",
+    "rubric_version": "v5",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "relevant",
+    "deployment_attribution_correct": "correct",
+    "deployment_expected": "relevant",
+    "needs_review": []
+  },
+  "round_valid": true,
+  "invalid_reason": null,
+  "manifest_path": "<repo>/incident/runs/round-manifest-2026-11-03T0324Z.json",
+  "provider": {
+    "defaultProviderId": "<provider-id>",
+    "name": "<provider>",
+    "model": "<model>",
+    "enabledCount": 1
+  },
+  "finished_at": "2026-11-03T03:46:16.355Z"
+}
