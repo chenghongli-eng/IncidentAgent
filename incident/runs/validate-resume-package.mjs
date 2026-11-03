@@ -9,6 +9,7 @@
  * 这个校验只查**可机械核对**的东西，不查文笔、不查「讲得好不好」：
  *   A 结构    必备文件在不在、台账能不能解析
  *   B 放行    正文每条 bullet 是否逐字来自 allowed_uses 含 resume_final 的 claim
+ *              （含该 claim 的精简措辞 candidate_wording_compact）
  *   C 数字回指 包里的每个关键数字能不能在仓库证据里原样找到
  *   D 禁写    正文里有没有踩「无论怎么决定都不能写」那几条
  *   E 引用    台账里引用的仓库文件是否真的存在；正文有没有引用已作废的轮次
@@ -57,6 +58,7 @@ console.log(`简历包校验：${PKG}\n`);
 const REQUIRED = [
   'paste-ready-当前可贴.md',
   'paste-ready-最终版.md',
+  'paste-ready-精简版.md',
   'paste-ready-审计区.md',
   'claim-ledger.json',
 ];
@@ -82,16 +84,45 @@ if (!ledger) {
 
 const claims = ledger.claims;
 
+// 禁写清单在 B5 与 D1 都要用，先定义在这里。
+const FORBIDDEN = [
+  { re: /F5/, why: 'F5 连接池类资源故障不可观测' },
+  {
+    re: /MCP\s*Server|MCP 服务端/i,
+    why: '只读通道交付形态是 CLI，不是 MCP Server',
+  },
+  {
+    re: /向量(知识库|检索)|RAG/i,
+    why: '底座是结构化知识表 + FTS5，不是向量库',
+  },
+  {
+    re: /100\s*%\s*无泄漏|完全无干扰|无干扰环境/i,
+    why: '101 观察窗混有前两轮容器活动（L1）',
+  },
+  { re: /贡献上游|实现了\s*Miniclaw\s*运行时/, why: '底座零改动' },
+  { re: /完美排除|完全排除所有误判/, why: '报告有 5 处数字问题' },
+  {
+    re: /\d+(\.\d+)?\s*%\s*(准确率|命中率)/,
+    why: 'claim-201 pending，无打分器',
+  },
+];
+
 // ---- B 放行口径 --------------------------------------------------------
 const finalizable = claims.filter(
   (c) =>
     Array.isArray(c.allowed_uses) && c.allowed_uses.includes('resume_final'),
 );
-const wording = new Set(
-  finalizable.map((c) => (c.candidate_wording ?? '').trim()),
-);
+const wording = new Set();
+for (const c of finalizable) {
+  wording.add((c.candidate_wording ?? '').trim());
+  if (c.candidate_wording_compact) {
+    wording.add(c.candidate_wording_compact.trim());
+  }
+}
 const bulletsNow = bullets(readPkg('paste-ready-当前可贴.md'));
 const bulletsFinal = bullets(readPkg('paste-ready-最终版.md'));
+const bulletsSlim = bullets(readPkg('paste-ready-精简版.md'));
+const allBullets = [...bulletsNow, ...bulletsFinal, ...bulletsSlim];
 
 check(
   'B1 当前可贴 有 bullet',
@@ -105,15 +136,64 @@ check(
 );
 
 const unmatched = [];
-for (const b of [...bulletsNow, ...bulletsFinal]) {
+for (const b of allBullets) {
   if (!wording.has(b.trim())) unmatched.push(b.slice(0, 40));
 }
 check(
-  'B3 每条 bullet 逐字来自 resume_final claim 的 candidate_wording',
+  'B3 每条 bullet 逐字来自 resume_final claim 的 candidate_wording（或其精简措辞）',
   unmatched.length === 0,
   unmatched.length
     ? `对不上：${unmatched.join(' / ')}`
-    : `${bulletsNow.length + bulletsFinal.length} 条全部对得上`,
+    : `${allBullets.length} 条全部对得上`,
+);
+
+// B5 精简措辞保真：精简是「重新措辞」，机器拦不住语义夸大，但能拦住数字。
+// 规则：精简措辞必须短于原文、必须带人工复核说明、且它出现的每个数字都必须出自原文。
+// 数字是简历上唯一能把「实测」变成「吹牛」的地方，所以这条比看起来重要。
+const compactProblems = [];
+for (const c of finalizable) {
+  const k = c.candidate_wording_compact;
+  if (!k) continue;
+  const full = c.candidate_wording ?? '';
+  const nums = (s) => new Set(s.match(/\d+(?:\.\d+)?/g) ?? []);
+  const extra = [...nums(k)].filter((n) => !nums(full).has(n));
+  if (extra.length) {
+    compactProblems.push(`${c.id} 引入原文没有的数字：${extra.join('、')}`);
+  }
+  if (k.trim().length >= full.trim().length) {
+    compactProblems.push(`${c.id} 精简措辞不短于原文`);
+  }
+  if (k.trim().length < 30) {
+    compactProblems.push(`${c.id} 精简措辞过短`);
+  }
+  const forbidden = FORBIDDEN.filter((f) => f.re.test(k));
+  if (forbidden.length) {
+    compactProblems.push(
+      `${c.id} 精简措辞踩禁写：${forbidden.map((f) => f.why).join('；')}`,
+    );
+  }
+  if (!c.compact_review_note || !c.compact_review_note.trim()) {
+    compactProblems.push(`${c.id} 精简措辞缺人工复核说明 compact_review_note`);
+  }
+}
+check(
+  'B5 精简措辞保真（数字不新增、不踩禁写、有复核说明）',
+  compactProblems.length === 0,
+  compactProblems.length
+    ? compactProblems.join(' / ')
+    : `${finalizable.filter((c) => c.candidate_wording_compact).length} 条精简措辞全过`,
+);
+
+// B6 精简版正文必须真的用上精简措辞，否则这个文件只是摆设。
+check(
+  'B6 精简版正文用的是精简措辞',
+  bulletsSlim.length > 0 &&
+    bulletsSlim.every((b) =>
+      finalizable.some(
+        (c) => (c.candidate_wording_compact ?? '').trim() === b.trim(),
+      ),
+    ),
+  `${bulletsSlim.length} 条`,
 );
 
 // 放行但没采用的 claim（001/004/005）不应出现在正文里——它们不在 wording 集合里，
@@ -122,7 +202,7 @@ const pendingIds = claims
   .filter((c) => c.verification_status !== 'confirmed')
   .map((c) => c.id);
 const pendingInBody = pendingIds.filter((id) =>
-  [...bulletsNow, ...bulletsFinal].some((b) => b.includes(id)),
+  allBullets.some((b) => b.includes(id)),
 );
 check(
   'B4 正文没有引用未确认的 claim',
@@ -189,28 +269,7 @@ check(
 );
 
 // ---- D 禁写 ------------------------------------------------------------
-const FORBIDDEN = [
-  { re: /F5/, why: 'F5 连接池类资源故障不可观测' },
-  {
-    re: /MCP\s*Server|MCP 服务端/i,
-    why: '只读通道交付形态是 CLI，不是 MCP Server',
-  },
-  {
-    re: /向量(知识库|检索)|RAG/i,
-    why: '底座是结构化知识表 + FTS5，不是向量库',
-  },
-  {
-    re: /100\s*%\s*无泄漏|完全无干扰|无干扰环境/i,
-    why: '101 观察窗混有前两轮容器活动（L1）',
-  },
-  { re: /贡献上游|实现了\s*Miniclaw\s*运行时/, why: '底座零改动' },
-  { re: /完美排除|完全排除所有误判/, why: '报告有 5 处数字问题' },
-  {
-    re: /\d+(\.\d+)?\s*%\s*(准确率|命中率)/,
-    why: 'claim-201 pending，无打分器',
-  },
-];
-const bodyText = [...bulletsNow, ...bulletsFinal].join('\n');
+const bodyText = allBullets.join('\n');
 const hits = FORBIDDEN.filter((f) => f.re.test(bodyText));
 check(
   'D1 正文没有踩禁写清单',

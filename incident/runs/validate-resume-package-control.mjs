@@ -200,6 +200,67 @@ try {
       `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
     );
   }
+  // 8 精简措辞里塞一个原文没有的数字（语义夸大最常见的形态）
+  {
+    const dir = brokenCopy('compact-number', (d) => {
+      const p = join(d, 'claim-ledger.json');
+      const led = JSON.parse(readFileSync(p, 'utf8'));
+      for (const c of led.claims) {
+        if (c.candidate_wording_compact) {
+          c.candidate_wording_compact = c.candidate_wording_compact.replace(
+            '四类通道',
+            '8 类通道',
+          );
+        }
+      }
+      writeFileSync(p, JSON.stringify(led, null, 2), 'utf8');
+    });
+    dirs.push(dir);
+    const r = runValidator(dir);
+    check(
+      '8 精简措辞引入原文没有的数字 → exit 1，且 B5 必须报错',
+      r.code === 1 && r.failedNames.some((n) => n.startsWith('B5')),
+      `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
+    );
+  }
+
+  // 9 精简版里放一条改写过的 bullet（不是逐字回指任何 claim）
+  {
+    const dir = brokenCopy('slim-paraphrase', (d) => {
+      patchFile(d, 'paste-ready-精简版.md', (s) =>
+        s.replace(
+          '- **过度归因防护的对照评测**',
+          '- **过度归因防护的对照评测** 额外验证了多轮重复实验的稳定性',
+        ),
+      );
+    });
+    dirs.push(dir);
+    const r = runValidator(dir);
+    check(
+      '9 精简版 bullet 被改写 → exit 1，且 B3 必须报错',
+      r.code === 1 && r.failedNames.some((n) => n.startsWith('B3')),
+      `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
+    );
+  }
+
+  // 10 精简措辞没有人工复核说明
+  {
+    const dir = brokenCopy('compact-no-review', (d) => {
+      const p = join(d, 'claim-ledger.json');
+      const led = JSON.parse(readFileSync(p, 'utf8'));
+      for (const c of led.claims) {
+        if (c.candidate_wording_compact) delete c.compact_review_note;
+      }
+      writeFileSync(p, JSON.stringify(led, null, 2), 'utf8');
+    });
+    dirs.push(dir);
+    const r = runValidator(dir);
+    check(
+      '10 精简措辞缺人工复核说明 → exit 1，且 B5 必须报错',
+      r.code === 1 && r.failedNames.some((n) => n.startsWith('B5')),
+      `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
+    );
+  }
 } finally {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }
