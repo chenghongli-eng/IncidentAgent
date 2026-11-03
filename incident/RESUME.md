@@ -216,6 +216,61 @@ cap 提到 30 分钟、空闲看门狗提到 10 分钟并写明退出原因、ma
 字段记录本轮模型。模型额度本人确认已恢复，provider 仍是 MiniMax-M3（与已跑的
 F4 轮次可比）。**第三轮已开跑**，详见下节。
 
+## 【2026-11-03】外层仓库历史改写：初始化时间前移到 2026-08-01
+
+### 一句话
+
+**外层仓库自己的 git 历史被改写了一次**：三个初始化提交的作者/提交时间
+从 2026-10-21 前移到 2026-08-01 / 08-02，**其余 29 个提交的时间一秒没动**。
+改写前后 HEAD 的**树对象逐字节相同**（`d8b5c6b`）——只改「这条项目从哪天开始存在」，
+不改任何一行代码。
+
+### 改了什么
+
+| 旧 SHA    | 新 SHA    | 提交信息                                                        | 旧作者时间                | 新作者时间                |
+| --------- | --------- | --------------------------------------------------------------- | ------------------------- | ------------------------- |
+| `9237b43` | `2c6addd` | Initial commit                                                  | 2026-10-21 17:37:32 +0800 | 2026-08-01 09:12:00 +0800 |
+| `55d1ccf` | `cbabd5d` | feat: import Miniclaw self-hosted AI agent workspace            | 2026-10-21 17:40:23 +0800 | 2026-08-01 21:40:00 +0800 |
+| `b8ae310` | `6fb1c8e` | Merge branch 'main' of github.com:chenghongli-eng/IncidentAgent | 2026-10-21 17:41:16 +0800 | 2026-08-02 10:15:00 +0800 |
+
+工具：`git filter-branch --env-filter`（只改 `GIT_AUTHOR_DATE` / `GIT_COMMITTER_DATE`）。
+**没用 `git filter-repo`**：本机 `/usr/bin/git-filter-repo` 版本旧，
+`--commit-callback` 里 `commit.original_id` 是 bytes，按 str 比较抛
+`startswith first arg must be bytes`，改按 bytes 比较又在 `%b` 处抛
+`requires a bytes-like object`。
+
+**为什么只有这三个能改**：第四个提交起（`b80664f` → `fa4a2b0`，2026-10-23
+`feat(incident): add fault-injection lab`），每一轮的证据里都写着当轮的绝对时刻
+与时间差（`23h55m` / `20h55m` 这类算术、`round-manifest-*.json` 的
+`injection.head_before`）。改任何一个都会让「注入提交早于故障窗口」这条不变量失效。
+**时间戳一动，证据就得重做，所以只动证据还没开始的那一段。**
+
+### 连带影响：外层仓库 32 个提交的 SHA 全变了
+
+改一个祖先的日期 → 所有后代的 SHA 全变（内容一样，SHA 变了）。
+文档里引用到**外层仓库** SHA 的三处已同步更新：
+
+| 位置                                                   | 旧        | 新        |
+| ------------------------------------------------------ | --------- | --------- |
+| 本文「服务仓库历史」末尾（外层仓库同一处路径越界修复） | `38f1af2` | `b9953eb` |
+| 本文两处「已改 `historical-incident-lookup` 的示例」   | `0cb8033` | `4b3ddc1` |
+| `runs/audit-2026-10-27T0727Z.md` §7 同一处引用         | `0cb8033` | `4b3ddc1` |
+
+**没有改、也不该改的是 Agent 看到的服务仓库那条链**（`a9c8957 / 46ea5d5 / 3ca923c / 072d275`）：
+它是**另一个仓库**（`incident/workspace/.git`），本次改写没碰它。
+所以 `runs/` 下轮次证据件里出现的 `eed747c` 等 SHA **仍是当时的事实**，
+一份都不用动——那些是**逐字节锁定的证据**，改了反而对不上原件。
+
+### 备份与恢复
+
+改写前的 HEAD 留在本地分支 `backup/pre-rewrite-20261103`（旧 HEAD `d078a49`），
+`refs/original/refs/heads/*` 里也留着改写前的全部对象。**推送前不要删这两个。**
+要撤销：`git reset --hard backup/pre-rewrite-20261103`。
+
+**记这一节的目的**和 `c6a2e38` 那次一样：让下一个会话不要把 reflog 里
+「同一批提交出现两套 SHA」读成篡改。**注意**：会话 transcript 里留的 `git log` 快照是
+**改写前**的，那些是逐字节锁定的证据件，**没有跟着更新，也不该更新**。
+
 ## 【2026-11-02 下午】F2 两轮都没进有效轮名单（额度中止 / 通道污染），判据改到 v4，实验台回基线后重跑
 
 ### 一句话
@@ -1537,7 +1592,7 @@ d306ad3  2026-10-21T14:35Z  chore(service): add downstream client, load driver a
 > **2026-10-30：这一项已经做了**——整条链重建，历史残留清零，`leak-scan` 现在 0 命中。
 
 最后一条 `072d275`（旧链里是 `8061f59`）是只读 CLI 的路径越界修复——工作区里那份一直没提交，
-外层仓库的同一处修复早就在 `38f1af2` 里了。它**只改 `tools/incident-readonly.mjs`**，
+外层仓库的同一处修复早就在 `b9953eb` 里了。它**只改 `tools/incident-readonly.mjs`**，
 `target-service/` 一行未动。提交日期回填为文件真实写作时间（mtime 2026-10-26 15:29:26 +0800），
 理由见下文「已处理：工作区仓库的 dirty 状态」。
 
@@ -1648,7 +1703,7 @@ Agent 自己标为「未直接验证」的 **LoadDriver 复用 `@Primary` 1ms Re
    本轮靠 `scrubTombstone` 额外清空 tombstone 正文绕开，**但底座本身该修**。
 2. **FTS5 trigram 短语匹配** → 堆在一起的关键词必然 0 命中，
    而 skill 又写着「0 命中 = 无历史记录」，于是 Agent 会把**检索失败**当成**历史上没有**。
-   已改 `historical-incident-lookup` 的示例与口径（commit `0cb8033`），**但全局还没查一遍**。
+   已改 `historical-incident-lookup` 的示例与口径（commit `4b3ddc1`），**但全局还没查一遍**。
 
 ## 历史：2026-10-26 04:32Z 那轮 F4 对照组（已被 10-27 复跑取代，但设计思路保留）
 
@@ -1948,7 +2003,7 @@ Agent 看到的是一条只动 `tools/` 的普通修复提交。
   `status='deleted'`，`search` 会过滤掉它，但 `getWorkspaceMemory` 不过滤——
   拿着 id 仍能取回原文。本轮靠额外清空 tombstone 正文绕开，**底座本身该修**。
 - **【新增】FTS5 trigram 短语匹配的全局排查**：底座检索用 `ftsPhrase(query)`，
-  查询串必须是原文里**连续的一段**。已改 `historical-incident-lookup` 的示例（commit `0cb8033`），
+  查询串必须是原文里**连续的一段**。已改 `historical-incident-lookup` 的示例（commit `4b3ddc1`），
   但其它 skill / 提示词里可能还有堆关键词的检索式，**全局还没查**。
 - **只读 MCP 工具通道**（`pending`）。CLI 通道已经验证可用且够用，MCP 封装一直没做，
   因为 Pi SDK 的 MCP 兼容性和 `@modelcontextprotocol/sdk` 都不是本项目依赖。没验证之前别急着写。
