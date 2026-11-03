@@ -11,6 +11,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.2
         version: 0.84.2(supports-color@8.1.1)(ws@8.22.0)(zod@4.6.7)
+      '@hapi/boom':
+        specifier: ^9.1.4
+        version: 9.1.4
       '@hono/node-server':
         specifier: ^2.0.12
         version: 2.1.5(hono@4.13.13)
@@ -20,6 +23,9 @@ importers:
       adm-zip:
         specifier: ^0.6.0
         version: 0.6.1
+      axios:
+        specifier: ^1.20.0
+        version: 1.20.0(debug@4.4.3(supports-color@8.1.1))(supports-color@8.1.1)
       baileys:
         specifier: ^7.0.0-rc13
         version: 7.0.0-rc14(sharp@0.35.5(@types/node@22.20.5))(supports-color@8.1.1)

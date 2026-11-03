@@ -11,3 +11,16 @@
 incident/runs/agent-report-*.md
 incident/runs/round-manifest-*.json
 incident/runs/score-*.json
+
+# 锁文件由包管理器生成，格式属于工具链的职责。
+#
+# 为什么必须排除：pnpm 写出的 YAML 用流式映射（`{integrity: ...}`），
+# prettier 会把整份锁文件重排成块状风格——「加两个直接依赖」这种小改动
+# 因此变成几千行 diff，而包管理器下次写回来又会把它打回去。
+# 生成物不该由格式化器接管，否则 diff 里全是与改动无关的噪声。
+pnpm-lock.yaml
+web/pnpm-lock.yaml
+yarn.lock
+package-lock.json
+web/package-lock.json
+container/agent-runner/package-lock.json
