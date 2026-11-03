@@ -10,7 +10,7 @@
  * 没清掉「描述已删除行为」的残留。这正是「记得去泄漏」这种口头约定必然会漏的地方——
  * 所以改成跑一下就知道。
  *
- * 扫八个面（Agent 能读到的，且**不构成答案键**的全部）：
+ * 扫十个面（Agent 能读到的，且**不构成答案键**的全部）：
  *   1. 服务仓库工作树
  *   2. 服务仓库完整 git 历史（`git log --all -p`）
  *   3. 工作区记忆（**注意：`listWorkspaceMemory` 会过滤 `status='deleted'`，
@@ -23,6 +23,8 @@
  *   7. Skill 源目录 `incident/skills/`（Agent 用 bash 能直接读到，
  *      运行时副本干净不代表源文件干净）
  *   8. Profile 源文件 `incident/agent-profile/*.json`（同上）
+ *   9. **聊天历史**（`messages` 表里本工作区所有 chat 的消息）
+ *  10. **Pi 会话记录**（`data/sessions/<folder>/.claude/sessions/*.jsonl`）
  *
  * 【2026-10-30 补第 6 面】上一轮只扫前五个面，报了「0 命中」，
  * 而 Agent 实际上读了旋钮文件——那里面写着「F2 defect deployed but dormant
@@ -30,6 +32,19 @@
  * 把故障编号和本轮设计直接交给了 Agent。**闸门漏掉一个面，报出来的
  * 「0 命中」就是假的**，这正是本脚本存在的理由：扫不到的面必须 exit 1，
  * 没扫的面也必须补上。
+ *
+ * 【2026-11-02 补第 9、10 面】这两面原来根本不在扫描面里，
+ * 而它们恰恰是**上一轮答案的原文所在**：聊天历史里有上一轮的问题与
+ * 根因报告，Pi 会话记录里有上一轮的完整对话。Agent 的 prompt 取的是
+ * 「上次交互之后」的消息（`getMessagesSince(chatJid, lastAgentTimestamp)`），
+ * 游标一旦缺失就整段灌进去；而且聊天表与 transcript 都在 Agent 能越界够到的
+ * 磁盘上（0738Z 那轮越界读了 9 次）。
+ *
+ * 这两面用**结构性判据**（非空即阻断），不靠关键词表。理由是可验证的：
+ * 0738Z 那份**完全正确**的报告里，`F2` 出现 0 次、`未判空`/`判空` 出现 0 次，
+ * 它把机制写成散文——「user 9999 无 profile → 下游 404 → fetchProfile 返回 null
+ * → OrderService.java:29 解引用 → NPE → 500」。**关键词表抓不住上一轮的答案**，
+ * 所以这里只把关键词当附加线索（命中就给更具体的理由），阻断判据是「非空」。
  *
  * 任何一面扫不到（比如从错误的 CWD 跑，数据库定位不到），本脚本**不会**当作通过：
  * 会打印 `! 扫描跳过` 并 exit 1。静默跳过等于给出一个假的「0 命中」。
@@ -39,6 +54,11 @@
  *   node incident/runs/leak-scan.mjs --quiet    # 只在有命中时打印
  *
  * ⚠️ 必须在**仓库根目录**跑：它用相对路径定位工作区、从 CWD 找数据库。
+ *
+ * ⚠️ 这是**开跑前**的闸门：第 9、10 面在闸门运行时必须为空。
+ *    `run-round.mjs` 在扫描前会调 `POST /api/groups/:jid/clear-history`，
+ *    那会连带清掉聊天历史、工作区记忆和 `data/sessions/<folder>/`；
+ *    手工复跑要自己先清，否则这里会如实报「非空」。
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
@@ -49,7 +69,16 @@ import { createRequire } from 'node:module';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
 const require = createRequire(import.meta.url);
-const distUrl = (name) => pathToFileURL(new URL(`../../dist/${name}`, import.meta.url).pathname).href;
+const distUrl = (name) =>
+  pathToFileURL(new URL(`../../dist/${name}`, import.meta.url).pathname).href;
+
+/** better-sqlite3 是可选依赖：缺了不能崩在这里，要走到扫描面时报「跳过」并 exit 1。 */
+let Database = null;
+try {
+  Database = require('better-sqlite3');
+} catch {
+  Database = null;
+}
 
 const WORKSPACE_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
 const ACTOR = { id: '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4', role: 'admin' };
@@ -57,6 +86,15 @@ const USER_ID = '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4';
 const REPO = join(ROOT, 'incident/workspace/target-service');
 const SKILL_DIR = join(ROOT, 'data/skills', USER_ID);
 const QUIET = process.argv.includes('--quiet');
+
+/**
+ * 测试开关：把这两处指向别处，就能在**副本**上验证闸门的行为，
+ * 不必为了跑负对照去动真实库和真实会话目录。
+ * 不设就是真实路径；生产用法永远用默认值。
+ */
+const DB_PATH = process.env.LEAK_SCAN_DB ?? join(ROOT, 'data/db/messages.db');
+const SESSIONS_ROOT =
+  process.env.LEAK_SCAN_SESSIONS ?? join(ROOT, 'data/sessions');
 
 /** 扫不到的面。空数组才允许报告「0 命中」——扫不到的面等于没扫。 */
 const skipped = [];
@@ -76,30 +114,51 @@ const skipped = [];
  * 所以按裸编号查。
  */
 const COMMON = [
-  { re: /\bF[1-8]\b/, why: '裸故障编号——编号本身就是在告诉 Agent 命中的是哪条故障' },
+  {
+    re: /\bF[1-8]\b/,
+    why: '裸故障编号——编号本身就是在告诉 Agent 命中的是哪条故障',
+  },
 ];
 
 const PATTERNS = {
   history: [
-    { re: /Fault[- ]F\d/i, why: '故障标签，等于把注入的故障编号直接交给 Agent' },
+    {
+      re: /Fault[- ]F\d/i,
+      why: '故障标签，等于把注入的故障编号直接交给 Agent',
+    },
     { re: /fault F\d/i, why: '同上（小写形态）' },
     { re: /unchecked downstream/i, why: 'F2 机制的一句话摘要' },
     { re: /turns it into an NPE/i, why: '直接说明「故障会变成 NPE」' },
-    { re: /to ship_to=UNKNOWN/i, why: '注释形态：描述被 F2 删掉的判空兜底（代码形态不算）' },
+    {
+      re: /to ship_to=UNKNOWN/i,
+      why: '注释形态：描述被 F2 删掉的判空兜底（代码形态不算）',
+    },
     { re: /degrades? (a|the|that) missing profile/i, why: '同上，另一种写法' },
     { re: /Fault-injection target/i, why: '实验台自曝身份' },
-    { re: /removes this index/i, why: 'F1 标签（注入器里已经没有 F1 了，注释本身也是过期的）' },
+    {
+      re: /removes this index/i,
+      why: 'F1 标签（注入器里已经没有 F1 了，注释本身也是过期的）',
+    },
     { re: /未判空/, why: '中文机制描述' },
   ],
   service: [
-    { re: /Fault[- ]F\d/i, why: '故障标签，等于把注入的故障编号直接交给 Agent' },
+    {
+      re: /Fault[- ]F\d/i,
+      why: '故障标签，等于把注入的故障编号直接交给 Agent',
+    },
     { re: /fault F\d/i, why: '同上（小写形态）' },
     { re: /unchecked downstream/i, why: 'F2 机制的一句话摘要' },
     { re: /turns it into an NPE/i, why: '直接说明「故障会变成 NPE」' },
-    { re: /to ship_to=UNKNOWN/i, why: '注释形态：描述被 F2 删掉的判空兜底（代码形态不算）' },
+    {
+      re: /to ship_to=UNKNOWN/i,
+      why: '注释形态：描述被 F2 删掉的判空兜底（代码形态不算）',
+    },
     { re: /degrades? (a|the|that) missing profile/i, why: '同上，另一种写法' },
     { re: /Fault-injection target/i, why: '实验台自曝身份' },
-    { re: /removes this index/i, why: 'F1 标签（注入器里已经没有 F1 了，注释本身也是过期的）' },
+    {
+      re: /removes this index/i,
+      why: 'F1 标签（注入器里已经没有 F1 了，注释本身也是过期的）',
+    },
     { re: /未判空/, why: '中文机制描述' },
   ],
   memory: [
@@ -108,22 +167,34 @@ const PATTERNS = {
     { re: /to ship_to=UNKNOWN/i, why: '被 F2 删掉的兜底行为' },
     { re: /degrades? (a|the|that) missing profile/i, why: '同上' },
     { re: /未判空/, why: '中文机制描述' },
-    { re: /OrderService|DownstreamClient|LoadDriver|loadOrder/, why: '具体类名/方法名——记忆里应该是方法与症状词汇，不是本场景的实体' },
+    {
+      re: /OrderService|DownstreamClient|LoadDriver|loadOrder/,
+      why: '具体类名/方法名——记忆里应该是方法与症状词汇，不是本场景的实体',
+    },
     { re: /DOWNSTREAM_TIMEOUT_MS\s*[=:]\s*1\b/, why: '触发源旋钮的具体值' },
-    { re: /\b(20|23)\s*(小时|h)\s*5[45]\s*分/, why: '直接给出部署间隔的结论（应由 Agent 自己算）' },
+    {
+      re: /\b(20|23)\s*(小时|h)\s*5[45]\s*分/,
+      why: '直接给出部署间隔的结论（应由 Agent 自己算）',
+    },
   ],
   skill: [
     { re: /Fault[- ]F\d/i, why: '故障标签' },
     { re: /unchecked downstream/i, why: '机制摘要' },
     { re: /to ship_to=UNKNOWN/i, why: '被 F2 删掉的兜底行为' },
-    { re: /OrderService|DownstreamClient|LoadDriver|loadOrder/, why: 'Skill 是通用方法论，不该出现本场景的具体类名' },
+    {
+      re: /OrderService|DownstreamClient|LoadDriver|loadOrder/,
+      why: 'Skill 是通用方法论，不该出现本场景的具体类名',
+    },
     { re: /未判空/, why: '中文机制描述' },
   ],
   profile: [
     { re: /Fault[- ]F\d/i, why: '故障标签' },
     { re: /unchecked downstream/i, why: '机制摘要' },
     { re: /to ship_to=UNKNOWN/i, why: '被 F2 删掉的兜底行为' },
-    { re: /OrderService|DownstreamClient|LoadDriver|loadOrder/, why: 'Profile 是方法论，不该出现本场景的具体类名' },
+    {
+      re: /OrderService|DownstreamClient|LoadDriver|loadOrder/,
+      why: 'Profile 是方法论，不该出现本场景的具体类名',
+    },
     { re: /DOWNSTREAM_TIMEOUT_MS\s*[=:]\s*1\b/, why: '触发源旋钮的具体值' },
   ],
   /**
@@ -131,9 +202,18 @@ const PATTERNS = {
    * 并从注释里读到了故障编号和本轮设计。这一面必须扫。
    */
   knob: [
-    { re: /\bfaults?\b|故障/i, why: '旋钮文件只写运维说明，不该出现「故障」字样' },
-    { re: /\bdormant\b|\b潜伏\b|静默态|\bsilent\b/i, why: '不该描述台子的静默态设计——那是本轮要测的东西' },
-    { re: /下一轮|下次|next round|next F\d/i, why: '不该描述实验计划——下一轮要做什么就是答案' },
+    {
+      re: /\bfaults?\b|故障/i,
+      why: '旋钮文件只写运维说明，不该出现「故障」字样',
+    },
+    {
+      re: /\bdormant\b|\b潜伏\b|静默态|\bsilent\b/i,
+      why: '不该描述台子的静默态设计——那是本轮要测的东西',
+    },
+    {
+      re: /下一轮|下次|next round|next F\d/i,
+      why: '不该描述实验计划——下一轮要做什么就是答案',
+    },
     { re: /deployed but|已上线|已部署/i, why: '不该描述某个缺陷的部署状态' },
   ],
   /** Skill 源文件：Agent 用 bash 能直接读到，运行时副本干净不代表源文件干净。 */
@@ -141,7 +221,10 @@ const PATTERNS = {
     { re: /Fault[- ]F\d/i, why: '故障标签' },
     { re: /unchecked downstream/i, why: '机制摘要' },
     { re: /to ship_to=UNKNOWN/i, why: '被 F2 删掉的兜底行为' },
-    { re: /OrderService|DownstreamClient|LoadDriver|loadOrder/, why: 'Skill 是通用方法论，不该出现本场景的具体类名' },
+    {
+      re: /OrderService|DownstreamClient|LoadDriver|loadOrder/,
+      why: 'Skill 是通用方法论，不该出现本场景的具体类名',
+    },
     { re: /未判空/, why: '中文机制描述' },
   ],
   /** Profile 源文件：同上，运行时副本干净不代表源文件干净。 */
@@ -149,8 +232,38 @@ const PATTERNS = {
     { re: /Fault[- ]F\d/i, why: '故障标签' },
     { re: /unchecked downstream/i, why: '机制摘要' },
     { re: /to ship_to=UNKNOWN/i, why: '被 F2 删掉的兜底行为' },
-    { re: /OrderService|DownstreamClient|LoadDriver|loadOrder/, why: 'Profile 是方法论，不该出现本场景的具体类名' },
+    {
+      re: /OrderService|DownstreamClient|LoadDriver|loadOrder/,
+      why: 'Profile 是方法论，不该出现本场景的具体类名',
+    },
     { re: /DOWNSTREAM_TIMEOUT_MS\s*[=:]\s*1\b/, why: '触发源旋钮的具体值' },
+  ],
+  /**
+   * 聊天历史与 Pi 会话记录：关键词只当**附加线索**。
+   * 这两面真正的阻断判据是「非空」——上一轮的答案就在里面，
+   * 而一份正确的报告会完全绕开这些关键词（0738Z 那份 `F2` 出现 0 次）。
+   * 所以这里只列「即使出现在报告里也不正当」的写法：
+   * 故障编号、机制摘要、实验台自曝身份。类名不算——正确诊断本来就该点名 OrderService。
+   */
+  chat: [
+    { re: /Fault[- ]F\d/i, why: '故障标签——把注入的故障编号交给了下一轮' },
+    { re: /unchecked downstream/i, why: 'F2 机制的一句话摘要' },
+    { re: /turns it into an NPE/i, why: '直接说明「故障会变成 NPE」' },
+    { re: /Fault-injection target/i, why: '实验台自曝身份' },
+    {
+      re: /deployed but|已上线|已部署/i,
+      why: '描述了某个缺陷的部署状态——那是本轮要测的东西',
+    },
+  ],
+  session: [
+    { re: /Fault[- ]F\d/i, why: '故障标签——把注入的故障编号交给了下一轮' },
+    { re: /unchecked downstream/i, why: 'F2 机制的一句话摘要' },
+    { re: /turns it into an NPE/i, why: '直接说明「故障会变成 NPE」' },
+    { re: /Fault-injection target/i, why: '实验台自曝身份' },
+    {
+      re: /deployed but|已上线|已部署/i,
+      why: '描述了某个缺陷的部署状态——那是本轮要测的东西',
+    },
   ],
 };
 
@@ -186,7 +299,11 @@ if (existsSync(REPO)) {
     if (file.includes('/.git/')) continue;
     scan('service', relative(REPO, file), readFileSync(file, 'utf8'));
   }
-  const history = execFileSync('git', ['log', '--all', '-p'], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 << 20 });
+  const history = execFileSync('git', ['log', '--all', '-p'], {
+    cwd: REPO,
+    encoding: 'utf8',
+    maxBuffer: 64 << 20,
+  });
   scan('history', '<git log --all -p>', history);
 }
 
@@ -195,9 +312,17 @@ try {
   const db = await import(distUrl('db.js'));
   db.initDatabase();
   const memory = await import(distUrl('memory-service.js'));
-  const res = memory.listWorkspaceMemory({ actor: ACTOR, workspaceJid: WORKSPACE_JID, limit: 100 });
+  const res = memory.listWorkspaceMemory({
+    actor: ACTOR,
+    workspaceJid: WORKSPACE_JID,
+    limit: 100,
+  });
   for (const item of res.items ?? []) {
-    scan('memory', `memory:${item.kind}/${item.status}/${item.id}`, `${item.title ?? ''}\n${item.content ?? ''}`);
+    scan(
+      'memory',
+      `memory:${item.kind}/${item.status}/${item.id}`,
+      `${item.title ?? ''}\n${item.content ?? ''}`,
+    );
   }
 } catch (err) {
   skipped.push(`工作区记忆（${err.message}）`);
@@ -212,14 +337,25 @@ for (const file of walk(SKILL_DIR)) {
 
 // ---- 4. Agent Profile ----
 try {
-  const Database = require('better-sqlite3');
-  const raw = new Database(join(ROOT, 'data/db/messages.db'), { readonly: true });
-  const cols = raw.prepare('PRAGMA table_info(agent_profiles)').all().map((r) => r.name);
-  const promptCols = ['identity_prompt', 'soul_prompt', 'agents_prompt', 'tools_prompt'].filter((c) => cols.includes(c));
+  if (!Database) throw new Error('better-sqlite3 不可用');
+  const raw = new Database(DB_PATH, { readonly: true });
+  const cols = raw
+    .prepare('PRAGMA table_info(agent_profiles)')
+    .all()
+    .map((r) => r.name);
+  const promptCols = [
+    'identity_prompt',
+    'soul_prompt',
+    'agents_prompt',
+    'tools_prompt',
+  ].filter((c) => cols.includes(c));
   if (promptCols.length) {
-    const rows = raw.prepare(`SELECT ${promptCols.join(',')} FROM agent_profiles`).all();
+    const rows = raw
+      .prepare(`SELECT ${promptCols.join(',')} FROM agent_profiles`)
+      .all();
     rows.forEach((row, i) => {
-      for (const c of promptCols) scan('profile', `agent_profiles[${i}].${c}`, String(row[c] ?? ''));
+      for (const c of promptCols)
+        scan('profile', `agent_profiles[${i}].${c}`, String(row[c] ?? ''));
     });
   }
   raw.close();
@@ -266,6 +402,104 @@ if (!existsSync(PROFILE_SRC)) {
   }
 }
 
+// ---- 8. 聊天历史（上一轮的问题与根因报告都在这里）----
+// 阻断判据是**结构性**的：闸门运行时这个工作区的 chat 必须一条消息都没有。
+// 关键词只能给出更具体的理由，抓不抓得住上一轮答案靠的是「非空」。
+let workspaceFolder = null;
+try {
+  if (!Database) throw new Error('better-sqlite3 不可用');
+  const raw = new Database(DB_PATH, { readonly: true });
+  try {
+    const grp = raw
+      .prepare('SELECT folder FROM registered_groups WHERE jid = ?')
+      .get(WORKSPACE_JID);
+    workspaceFolder = grp?.folder ?? null;
+    if (!workspaceFolder)
+      throw new Error(`工作区 ${WORKSPACE_JID} 没有登记 folder`);
+    // 同 folder 的所有 jid（Web + IM 绑定）以及各 Runtime Session 的虚拟 jid 都要算进来。
+    const jids = new Set(
+      raw
+        .prepare('SELECT jid FROM registered_groups WHERE folder = ?')
+        .all(workspaceFolder)
+        .map((r) => r.jid),
+    );
+    for (const a of raw
+      .prepare('SELECT chat_jid, id FROM agents WHERE group_folder = ?')
+      .all(workspaceFolder)) {
+      jids.add(`${a.chat_jid}#agent:${a.id}`);
+    }
+    const list = [...jids];
+    const rows = raw
+      .prepare(
+        `SELECT chat_jid, timestamp, is_from_me, content FROM messages
+          WHERE chat_jid IN (${list.map(() => '?').join(',')})
+          ORDER BY timestamp`,
+      )
+      .all(...list);
+    const perChat = new Map();
+    for (const row of rows) {
+      const bucket = perChat.get(row.chat_jid) ?? [];
+      bucket.push(row);
+      perChat.set(row.chat_jid, bucket);
+    }
+    for (const [chatJid, bucket] of perChat) {
+      hits.push({
+        surface: 'chat',
+        label: `${chatJid}（${bucket.length} 条）`,
+        why:
+          '闸门运行时聊天历史非空——上一轮的问题与根因报告都还在里面。' +
+          'Agent 的 prompt 取的是「上次交互之后」的消息（getMessagesSince(chatJid, 游标)），' +
+          '游标一旦缺失就整段灌进上下文；而聊天表本身也在 Agent 越界够得到的磁盘上。' +
+          '开跑前必须先 POST /api/groups/:jid/clear-history。',
+        matched: `${bucket[0].timestamp} ${(bucket[0].content ?? '').replace(/\s+/g, ' ').slice(0, 80)}`,
+        blocking: true,
+      });
+    }
+    for (const row of rows) {
+      scan(
+        'chat',
+        `${row.chat_jid}@${row.timestamp}`,
+        String(row.content ?? ''),
+      );
+    }
+  } finally {
+    raw.close();
+  }
+} catch (err) {
+  skipped.push(`聊天历史（${err.message}）`);
+  console.log(`! 聊天历史扫描跳过：${err.message}`);
+}
+
+// ---- 9. Pi 会话记录（Agent 自己上一轮的完整对话）----
+// clear-history 会把 data/sessions/<folder> 整个移走，所以闸门运行时
+// 这个目录里不该有 .jsonl transcript。有 = 上一轮的对话原文还在。
+try {
+  if (!workspaceFolder)
+    throw new Error('工作区 folder 未取到（聊天历史那一面没扫到）');
+  const sessionDir = join(SESSIONS_ROOT, workspaceFolder, '.claude/sessions');
+  const transcripts = existsSync(sessionDir)
+    ? readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'))
+    : [];
+  for (const name of transcripts) {
+    const file = join(sessionDir, name);
+    const text = readFileSync(file, 'utf8');
+    hits.push({
+      surface: 'session',
+      label: `${workspaceFolder}/.claude/sessions/${name}`,
+      why:
+        '闸门运行时会话记录还在——这是 Agent 上一轮的完整对话原文（提问、工具调用、' +
+        '以及它自己写下的根因报告）。clear-history 会把 data/sessions/<folder> 整个移走，' +
+        '所以这里出现 transcript 就说明清理没生效或根本没清。',
+      matched: `${(text.length / 1024).toFixed(1)} KB`,
+      blocking: true,
+    });
+    scan('session', `${workspaceFolder}/.claude/sessions/${name}`, text);
+  }
+} catch (err) {
+  skipped.push(`Pi 会话记录（${err.message}）`);
+  console.log(`! Pi 会话记录扫描跳过：${err.message}`);
+}
+
 // ---- 报告 ----
 const surfaceName = {
   service: '服务仓库工作树',
@@ -276,43 +510,54 @@ const surfaceName = {
   knob: '旋钮文件',
   skillSrc: 'Skill 源目录',
   profileSrc: 'Profile 源文件',
+  chat: '聊天历史',
+  session: 'Pi 会话记录',
 };
 const SURFACE_LIST = Object.values(surfaceName).join(' / ');
 if (hits.length === 0) {
   if (skipped.length) {
     console.log(
-      `\n答案泄漏扫描：**不能报告 0 命中**——${skipped.length} 个面没扫到：\n`
-      + skipped.map((s) => `  - ${s}`).join('\n')
-      + '\n扫不到的面等于没扫。检查 CWD（必须在仓库根目录跑）与依赖文件是否存在。',
+      `\n答案泄漏扫描：**不能报告 0 命中**——${skipped.length} 个面没扫到：\n` +
+        skipped.map((s) => `  - ${s}`).join('\n') +
+        '\n扫不到的面等于没扫。检查 CWD（必须在仓库根目录跑）与依赖文件是否存在。',
     );
-    process.exit(1);
+    process.exitCode = 1;
+  } else {
+    if (!QUIET) {
+      console.log(`答案泄漏扫描：0 命中（${SURFACE_LIST}）`);
+    }
+    process.exitCode = 0;
   }
-  if (!QUIET) {
-    console.log(`答案泄漏扫描：0 命中（${SURFACE_LIST}）`);
-  }
-  process.exit(0);
 }
 
-const blocking = hits.filter((h) => h.blocking);
-const historical = hits.filter((h) => !h.blocking);
+if (hits.length > 0) {
+  const blocking = hits.filter((h) => h.blocking);
+  const historical = hits.filter((h) => !h.blocking);
 
-console.log(`答案泄漏扫描：**${hits.length} 处命中**（阻断 ${blocking.length}，历史残留 ${historical.length}）\n`);
-for (const h of hits) {
-  console.log(`  [${surfaceName[h.surface]}] ${h.label}`);
-  console.log(`      命中：${h.matched}`);
-  console.log(`      为什么是答案：${h.why}`);
-}
-if (historical.length) {
   console.log(
-    '\n> 历史残留说明：git 历史里的命中**不是当前工作树的问题**，而是旧提交的内容'
-    + '（或删除某行时 diff 里留下的原文）。清掉它必须重建整条提交链，'
-    + '那会改掉审计件与台账引用的 SHA。\n'
-    + '> 2026-10-30 已经这么做过一次：整条链重建为 `a9c8957 / 46ea5d5 / 3ca923c / 072d275`，'
-    + '旧链打包存档在 `~/incident-lab-archive/service-repo-pre-rebuild.bundle`（旧 SHA 仍可解析、可审计）。\n'
-    + '> 再遇到残留，同样用 `node incident/runs/rebuild-service-history.mjs` 重建，'
-    + '并且 `leak-scan` 必须 0 命中才能开跑。',
+    `答案泄漏扫描：**${hits.length} 处命中**（阻断 ${blocking.length}，历史残留 ${historical.length}）\n`,
   );
+  for (const h of hits) {
+    console.log(`  [${surfaceName[h.surface]}] ${h.label}`);
+    console.log(`      命中：${h.matched}`);
+    console.log(`      为什么是答案：${h.why}`);
+  }
+  if (historical.length) {
+    console.log(
+      '\n> 历史残留说明：git 历史里的命中**不是当前工作树的问题**，而是旧提交的内容' +
+        '（或删除某行时 diff 里留下的原文）。清掉它必须重建整条提交链，' +
+        '那会改掉审计件与台账引用的 SHA。\n' +
+        '> 2026-10-30 已经这么做过一次：整条链重建为 `a9c8957 / 46ea5d5 / 3ca923c / 072d275`，' +
+        '旧链打包存档在 `~/incident-lab-archive/service-repo-pre-rebuild.bundle`（旧 SHA 仍可解析、可审计）。\n' +
+        '> 再遇到残留，同样用 `node incident/runs/rebuild-service-history.mjs` 重建，' +
+        '并且 `leak-scan` 必须 0 命中才能开跑。',
+    );
+  }
+  console.log(
+    '\n处理办法见 incident/runs/memory-de-leak.mjs 与 incident/RESUME.md「去泄漏」一节；' +
+      '改完必须重跑本脚本。',
+  );
+  // 任何命中都判失败：历史残留也算——「必须 0 命中才能开跑」。
+  // 用 exitCode 而不是 process.exit()：管道里 process.exit() 会截断输出。
+  process.exitCode = 1;
 }
-console.log('\n处理办法见 incident/runs/memory-de-leak.mjs 与 incident/RESUME.md「去泄漏」一节；'
-  + '改完必须重跑本脚本。');
-process.exit(blocking.length ? 1 : 1);

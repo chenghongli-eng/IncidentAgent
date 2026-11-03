@@ -143,6 +143,72 @@ async function json(url, { withCookie = false } = {}) {
   return res.json();
 }
 
+/**
+ * Miniclaw 服务（127.0.0.1:3000）是否在线。
+ *
+ * 为什么要有这个探针：0802Z 那轮前置闸门**全过**（P10 的 provider 是靠 HTTP 拿到的），
+ * 说明开跑时服务是在线的；但它在本轮中途掉了，runner 直到「跑 Agent」一步
+ * 才从 `ECONNREFUSED 127.0.0.1:3000` 知道——那时静默期已经烧掉 16 分钟、
+ * 告警已经 firing，整轮白跑。
+ *
+ * ⚠️ `mc-auth.mjs` **不碰网络**：它直接读 DB 里的 session 和密钥文件造 cookie。
+ * 所以「拿到 cookie」**不等于**「服务在跑」。必须真的发一次 HTTP 请求。
+ */
+async function probeMiniclaw() {
+  try {
+    const res = await fetchRetry(
+      `${MINICLAW}/api/groups`,
+      { headers: cookie ? { Cookie: cookie } : undefined },
+      2,
+    );
+    return res.ok ? { ok: true, why: `HTTP ${res.status}` } : { ok: false, why: `HTTP ${res.status}` };
+  } catch (err) {
+    const cause = err?.cause?.message ? `（${err.cause.message}）` : '';
+    return { ok: false, why: `${err.message}${cause}` };
+  }
+}
+
+/**
+ * 从本轮的 session transcript 里挖「Agent 为什么没说话」。
+ *
+ * 为什么要有：2026-11-02T1000Z 那轮中止，ws-run 的 stderr 只有
+ * `run_finished reason=completed`——看起来像 Agent 正常跑完却没输出。
+ * 真实原因在 data/sessions 的 transcript 里：连续 4 条
+ * `stopReason:"error", errorMessage:"429 已达到 Token Plan 用量上限"`。
+ * provider 报错既不走 ws-run 的 `error` 事件，也不打服务日志的 ERROR 级——
+ * 只落在 transcript。不挖它，中止原因就永远是一句猜不透的「no agent_reply」。
+ *
+ * 返回 { transcript, apiErrors }；找不到 transcript 就如实说找不到。
+ */
+function digAgentApiErrors(agentStartIso) {
+  const sessionDir = join(ROOT, 'data/sessions');
+  const startMs = new Date(agentStartIso).getTime();
+  let transcript = null;
+  if (existsSync(sessionDir)) {
+    for (const dir of readdirSync(sessionDir)) {
+      const cand = join(sessionDir, dir, '.claude/sessions');
+      if (!existsSync(cand)) continue;
+      for (const f of readdirSync(cand)) {
+        if (!f.endsWith('.jsonl')) continue;
+        const p = join(cand, f);
+        if (statSync(p).mtimeMs < startMs) continue;
+        if (!transcript || statSync(p).mtimeMs > statSync(transcript).mtimeMs) transcript = p;
+      }
+    }
+  }
+  if (!transcript) return { transcript: null, apiErrors: null, why: '没找到本轮的 session transcript' };
+  const errors = [];
+  for (const line of readFileSync(transcript, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    let r;
+    try { r = JSON.parse(line); } catch { continue; }
+    const msg = r?.message;
+    if (msg?.stopReason !== 'error') continue;
+    errors.push({ at: msg.timestamp ?? r.timestamp, error: String(msg.errorMessage ?? '').slice(0, 300) });
+  }
+  return { transcript, apiErrors: errors };
+}
+
 const manifest = {
   stamp: STAMP,
   fault: FAULT,
@@ -520,6 +586,18 @@ async function main() {
   }
   record('P9', true, `工作区就位（custom_cwd=${grp.custom_cwd}，folder=${grp.folder}）`);
 
+  // P11：Miniclaw 服务本身在线。
+  // runner 不负责起服务，只假设 3000 端口上有东西在听；而 mc-auth.mjs 只读 DB 造 cookie，
+  // 不碰网络——所以「拿到 cookie」不等于「服务在跑」。0802Z 就是漏了这一条。
+  const probe = await probeMiniclaw();
+  if (!probe.ok) {
+    fail(
+      `Miniclaw 服务不在线（${MINICLAW}：${probe.why}）。\n` +
+        `runner 不负责起服务，开跑前先把它拉起来：node dist/index.js`,
+    );
+  }
+  record('P11', true, `Miniclaw 服务在线（${probe.why}）`);
+
   if (DRY_RUN) {
     manifest.finished_at = new Date().toISOString();
     writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
@@ -612,6 +690,16 @@ async function main() {
   // ───────────────────────────────────────────────────────────
   section('跑 Agent');
 
+  // 跑 Agent 之前再探一次服务。0802Z 的教训：开跑时服务在线，跑到一半掉了，
+  // 结果在告警 firing 之后才发现，白烧一整轮。掉线要在开跑前就暴露。
+  const live = await probeMiniclaw();
+  if (!live.ok) {
+    fail(
+      `Miniclaw 服务在本轮中途掉线了（${MINICLAW}：${live.why}）。\n` +
+        `这一轮不是 Agent 的问题，别记到它头上。`,
+    );
+  }
+
   writeFileSync('/tmp/mc-cookie.txt', cookie);
   const agentStart = new Date().toISOString();
   const ws = spawnSync(
@@ -625,7 +713,26 @@ async function main() {
     const why = [ws.stderr, ws.error?.message, ws.signal ? `signal=${ws.signal}` : '']
       .filter(Boolean)
       .join('\n');
-    fail(`Agent 没有产出任何文本（exit ${ws.status}）：\n${why || '（ws-run 没有输出，也没有 stderr）'}`);
+    // ws 的 stderr 只有「run_finished reason=…」这类表面现象。
+    // 真实原因（例如 provider 429）只写在本轮的 session transcript 里，挖出来再报。
+    // 挖不到也如实写进 manifest——「没挖到」不能装成「没有」。
+    const dug = digAgentApiErrors(agentStart);
+    if (dug.apiErrors?.length) {
+      manifest.agent_api_errors = dug;
+      const last = dug.apiErrors[dug.apiErrors.length - 1];
+      const rateLimit = /429|rate.?limit|用量上限|quota/i.test(last.error);
+      fail(
+        `Agent 没有产出任何文本（exit ${ws.status}）。\n`
+        + `ws-run stderr：\n${why || '（无）'}\n`
+        + `transcript（${dug.transcript}）里有 ${dug.apiErrors.length} 条 API 错误，最后一条：\n`
+        + `  ${last.error}\n`
+        + (rateLimit
+          ? `这是 provider 额度/限流问题，不是 Agent 也不是台子的问题——额度恢复前别再烧静默期。`
+          : `transcript 里的错误不是额度类，逐条看过再决定这一轮算谁的。`),
+      );
+    }
+    manifest.agent_api_errors = dug;
+    fail(`Agent 没有产出任何文本（exit ${ws.status}）：\n${why || '（ws-run 没有输出，也没有 stderr）'}\n${dug.why ?? ''}`);
   }
   writeFileSync(REPORT_PATH, ws.stdout);
   manifest.agent = {
