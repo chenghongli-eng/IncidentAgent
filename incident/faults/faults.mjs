@@ -2,6 +2,7 @@
 // Fault injection for the IncidentAgent benchmark lab.
 //
 //   node faults.mjs list
+//   node faults.mjs status F2          print baseline|injected for the source tree
 //   node faults.mjs inject F2          apply a code fault and commit it
 //   node faults.mjs restore F2         undo a code fault and commit the undo
 //   node faults.mjs show  F2          print the diff the fault introduces
@@ -22,7 +23,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SERVICE = process.env.TARGET_SERVICE_DIR ??
+const SERVICE =
+  process.env.TARGET_SERVICE_DIR ??
   new URL('../workspace/target-service/', import.meta.url).pathname;
 
 const FAULTS = [
@@ -63,7 +65,11 @@ function git(...argv) {
 }
 
 function gitRoot(...argv) {
-  return execFileSync('git', argv, { cwd: SERVICE, encoding: 'utf8', maxBuffer: 16 << 20 });
+  return execFileSync('git', argv, {
+    cwd: SERVICE,
+    encoding: 'utf8',
+    maxBuffer: 16 << 20,
+  });
 }
 
 const cmd = process.argv[2];
@@ -76,14 +82,44 @@ switch (cmd) {
     }
     break;
 
+  /**
+   * 报当前源码里是基线还是缺陷态。
+   *
+   * 为什么需要这个命令：F4 的静默态要求「缺陷在线」（判空兜底已被删掉），
+   * 否则运行时旋钮只会让下游超时降级成 UNKNOWN，永远不会 500。
+   * 这件事以前是「靠操作者记得台子此刻处在什么状态」——
+   * 2026-11-04 那次开跑就吃了这一下：台子是基线，闸门全过、旋钮注入了，
+   * 告警等 300 秒也不 firing，整轮白等。
+   *
+   * 输出格式：`<id> <baseline|injected|unknown> <file>`（运行时故障没有 git 状态）。
+   */
+  case 'status': {
+    const fault = byId(id);
+    if (!fault) die(`unknown fault ${id}`);
+    if (fault.kind !== 'code') {
+      process.stdout.write(`${fault.id} runtime (no git state)\n`);
+      break;
+    }
+    const current = readFileSync(join(SERVICE, fault.file), 'utf8');
+    let state = 'unknown';
+    if (current.includes(fault.find)) state = 'baseline';
+    else if (current.includes(fault.replace)) state = 'injected';
+    process.stdout.write(`${fault.id} ${state} ${fault.file}\n`);
+    break;
+  }
+
   case 'show': {
     const fault = byId(id);
     if (!fault) die(`unknown fault ${id}`);
-    if (fault.kind !== 'code') die(`${id} is a runtime fault; nothing to show in git`);
+    if (fault.kind !== 'code')
+      die(`${id} is a runtime fault; nothing to show in git`);
     const current = readFileSync(join(SERVICE, fault.file), 'utf8');
-    if (!current.includes(fault.find)) die(`${id} is already injected; nothing left to show`);
+    if (!current.includes(fault.find))
+      die(`${id} is already injected; nothing left to show`);
     process.stdout.write(`--- a/${fault.file}\n+++ b/${fault.file}\n`);
-    process.stdout.write(`-${fault.find.replace(/\n/g, '\n-')}\n+${fault.replace}\n`);
+    process.stdout.write(
+      `-${fault.find.replace(/\n/g, '\n-')}\n+${fault.replace}\n`,
+    );
     break;
   }
 
@@ -103,7 +139,9 @@ switch (cmd) {
     const path = join(SERVICE, fault.file);
     const current = readFileSync(path, 'utf8');
     if (!current.includes(fault.find)) {
-      die(`cannot inject ${id}: baseline text not found in ${fault.file} (already injected? run \`faults.mjs restore ${id}\` first)`);
+      die(
+        `cannot inject ${id}: baseline text not found in ${fault.file} (already injected? run \`faults.mjs restore ${id}\` first)`,
+      );
     }
 
     writeFileSync(path, current.replace(fault.find, fault.replace));
@@ -112,8 +150,12 @@ switch (cmd) {
     // A body like "Fault-F2: unchecked downstream call raises NPE" hands over
     // the ground truth, so the message stays a plain feature subject.
     gitRoot('commit', '-m', fault.commit);
-    process.stdout.write(`${id} injected and committed at ${git('rev-parse', '--short', 'HEAD')}\n`);
-    process.stdout.write('now rebuild and redeploy:  ./lab.sh build target-service\n');
+    process.stdout.write(
+      `${id} injected and committed at ${git('rev-parse', '--short', 'HEAD')}\n`,
+    );
+    process.stdout.write(
+      'now rebuild and redeploy:  ./lab.sh build target-service\n',
+    );
     break;
   }
 
@@ -140,7 +182,8 @@ switch (cmd) {
   case 'restore': {
     const fault = byId(id);
     if (!fault) die(`unknown fault ${id}`);
-    if (fault.kind !== 'code') die(`${id} is a runtime fault; there is nothing in git to restore`);
+    if (fault.kind !== 'code')
+      die(`${id} is a runtime fault; there is nothing in git to restore`);
 
     const path = join(SERVICE, fault.file);
     const current = readFileSync(path, 'utf8');
@@ -149,19 +192,27 @@ switch (cmd) {
       break;
     }
     if (!current.includes(fault.replace)) {
-      die(`cannot restore ${id}: the injected form is not in ${fault.file} (was it changed by hand?)`);
+      die(
+        `cannot restore ${id}: the injected form is not in ${fault.file} (was it changed by hand?)`,
+      );
     }
 
     writeFileSync(path, current.replace(fault.replace, fault.find));
     gitRoot('add', fault.file);
     gitRoot('commit', '-m', fault.restoreCommit);
-    process.stdout.write(`${id} restored and committed at ${git('rev-parse', '--short', 'HEAD')}\n`);
-    process.stdout.write('now rebuild and redeploy:  ./lab.sh build target-service\n');
+    process.stdout.write(
+      `${id} restored and committed at ${git('rev-parse', '--short', 'HEAD')}\n`,
+    );
+    process.stdout.write(
+      'now rebuild and redeploy:  ./lab.sh build target-service\n',
+    );
     break;
   }
 
   default:
-    process.stderr.write('usage: faults.mjs <list|show|inject|restore|revert> [faultId]\n');
+    process.stderr.write(
+      'usage: faults.mjs <list|status|show|inject|restore|revert> [faultId]\n',
+    );
     process.exit(1);
 }
 

@@ -389,7 +389,21 @@ const FAULTS = {
    */
   F4: {
     title: '下游读超时（运行时旋钮）',
-    /** 静默态就是台子的常态：缺陷在线、order 2 不在压测路径、超时旋钮 2000。 */
+    /**
+     * 静默态 = **缺陷在线** + order 2 不在压测路径 + 超时旋钮 2000。
+     *
+     * 「缺陷在线」这一条以前是**隐含**的：F4 测的是「触发源是运行时配置、不是发布」，
+     * 而要让运行时配置能触发 5xx，判空兜底必须已经被删掉（缺陷已上线）。
+     * 台子停在基线时，旋钮改成 1ms 只会让下游超时 → 降级成 UNKNOWN → 还是 200，
+     * 5xx 比例永远是 0，告警等 300 秒也不 firing。
+     *
+     * 2026-11-04 那次开跑就停在这儿：前置闸门全过、旋钮注入了、故障没起来，
+     * 整轮中止（没有 Agent 产出，所以不产生证据，只是白等 5 分钟）。
+     * 根因是**静默态的前提从来没被检查过**——这一轮把前提变成自己建立、自己验证：
+     *   · 源码里缺陷在不在位 → faults.mjs status F2（读不出来就不跑）
+     *   · 跑着的镜像是不是这份源码 → 重新构建（源码是缺陷版 ≠ 镜像是缺陷版）
+     *   · 静默态本身是不是对 → order 3 必须 200（超时 2000ms 时下游能通）
+     */
     async setup() {
       const knob = readKnob();
       if (knob.DOWNSTREAM_TIMEOUT_MS !== '2000') {
@@ -402,25 +416,95 @@ const FAULTS = {
           '静默态要求 order 2 不在 LOAD_PATHS 里——它在的话缺陷会自己发作，那是 F2 的场景。',
         );
       }
-      return { note: '台子已在静默态：缺陷在线但 order 2 不在压测路径' };
+
+      const status = sh(`${NODE} ${FAULTS_MJS} status F2`, { cwd: LAB });
+      if (status.code !== 0) {
+        fail(`faults.mjs status F2 失败：\n${status.err || status.out}`);
+      }
+      const state = status.out.trim().split(/\s+/)[1] ?? 'unknown';
+      if (state === 'baseline') {
+        const inject = sh(`${NODE} ${FAULTS_MJS} inject F2`, { cwd: LAB });
+        if (inject.code !== 0) {
+          fail(`faults.mjs inject F2 失败：\n${inject.err || inject.out}`);
+        }
+      } else if (state !== 'injected') {
+        fail(
+          `读不懂 F2 的源码状态（${status.out.trim()}）——不能确定缺陷在不在位，这一轮不开跑。`,
+        );
+      }
+
+      // 重新构建：源码是缺陷版不等于跑着的镜像是缺陷版，这两件事必须对上。
+      mustSh('./lab.sh build target-service', { cwd: LAB, timeout: 900000 });
+      if (!(await waitContainerHealthy())) {
+        fail('重建后 target-service 没有变 healthy。');
+      }
+      const o3 = await orderStatus(3);
+      if (o3 !== 200) {
+        fail(
+          `静默态要求 order 3 返回 200（超时 2000ms 时下游能通），实际 ${o3}。台子不对，这一轮不开跑。`,
+        );
+      }
+      return {
+        defect_state: state,
+        defect_commit: mustSh(`git -C ${WORKSPACE} log -1 --format='%h %aI %s'`)
+          .out,
+        load_paths: knob.LOAD_PATHS,
+        note: '静默态：缺陷在线（判空兜底已删），order 2 不在压测路径，超时旋钮 2000',
+      };
     },
     /**
-     * F4 不需要坐稳：这一轮的触发源就是容器重建本身，
-     * 容器刚起来、旋钮刚改，正是 Agent 要看到的现场。
+     * F4 要坐稳，但基准和 F2 不同。
+     *
+     * F4 的触发源是**容器重建本身**（旋钮一改就重建），所以注入那一刻的重建就是现场，
+     * 不需要等它滑出窗口。要等的是**静默态那次部署**：缺陷是在 setup 里提交并部署的，
+     * 那次提交和那次重建都落在窗口里的话，Agent 有理由把触发源归到发布——
+     * 那这一轮测的就不是「会不会误归因到发布」，而是「会不会做时间对齐」。
+     *
+     * 基准 = max(缺陷提交时刻, 容器启动时刻) + 16 分钟。
      */
     async settle() {
-      return null;
+      const started = containerStartedAt();
+      if (!started) fail('读不到容器启动时刻，坐不稳。');
+      const head = mustSh(
+        `git -C ${WORKSPACE} log -1 --format='%aI'`,
+      ).out.trim();
+      const committed = new Date(head).getTime();
+      const newest = Math.max(committed, started);
+      const waitMs = SETTLE_MS - (Date.now() - newest);
+      const detail = {
+        defect_committed_at: new Date(committed).toISOString(),
+        container_started_at: new Date(started).toISOString(),
+        settle_ms: SETTLE_MS,
+        settle_basis: new Date(newest).toISOString(),
+      };
+      if (waitMs <= 0) return { ...detail, waited_ms: 0 };
+      log(
+        `  静默态坐稳中：等 ${Math.ceil(waitMs / 1000)} 秒（到 ${new Date(newest + SETTLE_MS).toISOString()}）`,
+      );
+      await sleep(waitMs);
+      return { ...detail, waited_ms: Math.round(waitMs) };
     },
     async inject() {
       const knob = readKnob();
       setKnob('DOWNSTREAM_TIMEOUT_MS', '1');
       await recreate();
+      // 故障到底起来没有，现在就验：缺陷在线的话，超时会让 profile 取回 null，
+      // 没有判空兜底 → NPE → 500。兜底还在的话就是 200（降级成 UNKNOWN）。
+      // 以前这一步不验，代价是「等 300 秒等一个永远不会来的告警」。
+      const o3 = await orderStatus(3);
+      if (o3 !== 500) {
+        fail(
+          `注入后 order 3 返回 ${o3}，不是 500。缺陷没在位——` +
+            '超时只会让下游失败，兜底还在的话就降级成 UNKNOWN（200），故障起不来。',
+        );
+      }
       return {
         knob: 'DOWNSTREAM_TIMEOUT_MS',
         from: knob.DOWNSTREAM_TIMEOUT_MS,
         to: '1',
         changed: ['运行时旋钮'],
         unchanged: ['代码', '压测路径', '数据'],
+        probe: `注入后 order 3 = ${o3}（缺陷在位）`,
         note: '本轮只改运行时旋钮，代码一行没动',
       };
     },
