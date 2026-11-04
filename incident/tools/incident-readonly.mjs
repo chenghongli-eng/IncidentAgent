@@ -50,6 +50,28 @@ const RUNTIME_KNOBS = [
 const args = process.argv.slice(2);
 const channel = args.shift();
 
+/**
+ * 容器启动时刻。
+ *
+ * `logs first` 把它当默认窗口起点：问「异常首现」时，正确的起点是**当前这次部署之后**，
+ * 不是日志文件的最开头（日志归档里还留着前几天别的故障）。少了这个默认值，
+ * Agent 只能自己猜一个 --since，然后很容易猜出一个**产出不了它引用的那个值**的窗口——
+ * 2026-11-04 那轮报告的锚点 ② 就是这么错的（第 3 次犯这一类）。
+ */
+function containerStartedAt() {
+  try {
+    const raw = execFileSync(
+      'docker',
+      ['inspect', CONTAINER, '--format', '{{.State.StartedAt}}'],
+      { encoding: 'utf8' },
+    ).trim();
+    const ms = Date.parse(raw);
+    return Number.isNaN(ms) ? null : ms;
+  } catch {
+    return null;
+  }
+}
+
 const usage = `incident-readonly <channel> [options]
 
 channels (all read-only):
@@ -64,6 +86,9 @@ channels (all read-only):
   metrics targets                              scrape target health
   logs   grep    <pattern> [--since ISO] [--until ISO] [--limit N] [--count]
   logs   first   <pattern> [--since ISO]     earliest occurrence after a timestamp
+                                               (--since defaults to the container
+                                               start time and the effective window
+                                               is printed with the result)
   git    log     [--since ISO] [--until ISO] [--limit N]
   git    diff    <ref> [--stat]              changes introduced by a commit
   git    show    <ref>                        commit metadata and changed files
@@ -234,12 +259,34 @@ async function main() {
       const until = flag('until');
       const count = args.includes('--count');
       const limit = Number(flag('limit', op === 'first' ? '1' : '50'));
-      const sinceMs = since ? Date.parse(since) : Number.NEGATIVE_INFINITY;
+      let sinceMs = since ? Date.parse(since) : Number.NEGATIVE_INFINITY;
       const untilMs = until ? Date.parse(until) : Number.POSITIVE_INFINITY;
       if (Number.isNaN(sinceMs))
         die(`--since is not a valid timestamp: ${since}`);
       if (Number.isNaN(untilMs))
         die(`--until is not a valid timestamp: ${until}`);
+
+      /**
+       * `first` 的默认窗口：容器启动时刻。
+       *
+       * 为什么要默认值：问「异常首现」却不给窗口，工具就只能从日志文件开头找，
+       * 而日志归档里还留着前几天别的故障——找到的是「历史上第一次」，不是「这次的首现」。
+       * Agent 于是自己编一个 --since，然后引一个**产出不了那个值**的命令（2026-11-04 那轮的
+       * 硬错误 D1，第 3 次犯这一类）。把默认值放进工具，Agent 就不用猜。
+       *
+       * 窗口本身随结果一起打印：引用这条输出时，窗口是自带的，读者不必反推。
+       */
+      let windowNote = '';
+      if (op === 'first' && !since) {
+        const started = containerStartedAt();
+        if (started === null) {
+          windowNote =
+            '# --since omitted and the container start time is unavailable: the window starts at the beginning of the logs';
+        } else {
+          sinceMs = started;
+          windowNote = `# --since omitted: the window starts at the container start time (${new Date(started).toISOString()})`;
+        }
+      }
 
       let lines = logFiles().flatMap((file) =>
         readLogText(file)
@@ -255,11 +302,10 @@ async function main() {
         return void console.log(String(lines.length));
       }
       const picked = op === 'first' ? lines.slice(0, 1) : lines.slice(0, limit);
-      return void console.log(
-        picked.length
-          ? picked.map((l) => l.text).join('\n')
-          : `(no match for ${JSON.stringify(pattern)} since ${since ?? 'beginning'})`,
-      );
+      const body = picked.length
+        ? picked.map((l) => l.text).join('\n')
+        : `(no match for ${JSON.stringify(pattern)} since ${since ?? (Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : 'beginning')})`;
+      return void console.log(windowNote ? `${windowNote}\n${body}` : body);
     }
 
     case 'git': {

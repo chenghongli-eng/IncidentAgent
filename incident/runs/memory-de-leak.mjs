@@ -11,12 +11,23 @@
  *
  * 走的是 Miniclaw 自己的 memory-service（版本、审计、FTS 索引同步更新），
  * 不是直接改 SQLite。
+ *
+ * 【为什么方法记忆不按故障类分流，而是写成一条两边都一样的中性表述】
+ * 2026-11-04 复核件（runs/audit-2026-11-04T0324Z.md §4 L4）指出：原文第 5 条
+ * 「只查 git 会漏掉运行时配置这一层」每轮都写，而对 F4 来说**运行时配置层正好就是答案层**
+ * —— 这是结构性偏差，不是措辞问题。
+ * 两个选项：(a) 按故障类分流，F4 轮不注入这条；(b) 改成不点名的分层表述。
+ * 选 (b) 而不是 (a)，因为**分流会让两个实验臂的记忆面不同**：
+ * F2 臂有「去看运行时配置」的提示、F4 臂没有 → 两臂的难度不再对等，
+ * 「F2 与 F4 在同一 rubric 下的对照」就不成立。
+ * 现在第 5 条对两臂**逐字相同**，且不再点名任何一层是答案。
  */
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const distUrl = (name) => pathToFileURL(new URL(`../../dist/${name}`, import.meta.url).pathname).href;
+const distUrl = (name) =>
+  pathToFileURL(new URL(`../../dist/${name}`, import.meta.url).pathname).href;
 
 const WORKSPACE_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
 const ACTOR = { id: '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4', role: 'admin' };
@@ -37,9 +48,9 @@ const LESSON_CONTENT = `target-service 过去多次出现 5xx。本条只留方�
 4. 5xx 比例表达式在没有 5xx 时整个序列不存在（分子序列缺失则表达式无值）。指标空洞本身就是「该期间无 500」的佐证；取负证据用 --count，不要自己数行数。
 
 【分层排查的经验】
-5. 只查 git 会漏掉运行时配置这一层：配置文件未必进版本库，容器实际生效的参数要以运行中容器的实际值为准。
+5. 证据分三层：代码变更、运行时生效参数、运行中的实际表现。每一层单独取证，哪一层是触发源由证据决定，不按排查顺序预设。
 6. 排除依赖类/资源类故障的依据：下游返回的是业务性 404 或超时异常（不是拒连）；连接池 active/pending/timeout 都在低位。
-7. actuator 的 env / configprops 把值全掩码成 ******，只能证明配置项存在，不能证明生效值。
+7. actuator 的 env / configprops 把值全掩码成 ******：它能证明配置项存在，但读不出具体数值。
 
 【怎么用这条记忆】
 它描述的是过去怎么查，不是这次的结论。每次都要独立取证：把上一次的诱因套到这一次上，是最常见的误判。`;
@@ -66,7 +77,9 @@ function forget(itemId, expectedRevision, reason) {
     expectedRevision,
     reason,
   });
-  console.log(`forget ${itemId} -> status=${res.item.status} revision=${res.item.revision}`);
+  console.log(
+    `forget ${itemId} -> status=${res.item.status} revision=${res.item.revision}`,
+  );
 }
 
 /**
@@ -77,7 +90,9 @@ function forget(itemId, expectedRevision, reason) {
  */
 function scrubTombstone(itemId) {
   const Database = require('better-sqlite3');
-  const raw = new Database(new URL('../../data/db/messages.db', import.meta.url).pathname);
+  const raw = new Database(
+    new URL('../../data/db/messages.db', import.meta.url).pathname,
+  );
   const row = raw
     .prepare(
       `SELECT title, content FROM workspace_memory_items WHERE id = ? AND status = 'deleted'`,
@@ -106,7 +121,13 @@ function scrubTombstone(itemId) {
 
 function getMemoryOrNull(itemId) {
   try {
-    return memory.getWorkspaceMemory({ actor: ACTOR, workspaceJid: WORKSPACE_JID, itemId }).item ?? null;
+    return (
+      memory.getWorkspaceMemory({
+        actor: ACTOR,
+        workspaceJid: WORKSPACE_JID,
+        itemId,
+      }).item ?? null
+    );
   } catch {
     return null;
   }

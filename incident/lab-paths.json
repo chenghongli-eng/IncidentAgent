@@ -4,5 +4,6 @@
   "serviceDir": "/mnt/my-work/incident-lab/workspace/target-service",
   "readonlyCli": "/mnt/my-work/incident-lab/workspace/tools/incident-readonly.mjs",
   "logsDir": "/mnt/my-work/incident-lab/workspace/logs",
+  "archiveDir": "/mnt/my-work/incident-lab/archive",
   "repoRoot": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main"
 }

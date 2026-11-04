@@ -37,7 +37,9 @@ const REPO = JSON.parse(
 ).workspaceRoot;
 const ARCHIVE_DIR =
   process.env.INCIDENT_HISTORY_ARCHIVE ??
-  join(process.env.HOME, 'incident-lab-archive');
+  JSON.parse(
+    readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+  ).archiveDir;
 const ARCHIVE = join(ARCHIVE_DIR, 'service-repo-pre-rebuild.bundle');
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -117,10 +119,14 @@ function commitWithTree(oldCommit, newTree, newParent) {
       throw new Error(`could not rewrite tree line of ${oldCommit}`);
   }
   if (newParent) {
-    const before = newHeader;
+    // 「父行存在」才是检查点，不是「字符串变了」。
+    // 第一个提交常常**逐字不变**（它没碰过需要 re-baseline 的文件，重建出来的
+    // commit 对象与原对象字节相同 → SHA 也相同），于是新父 SHA 等于旧父 SHA，
+    // 替换后字符串一模一样。拿「有没有变化」当失败判据，会在这种情况下
+    // 误报「无法改写 parent 行」而中止整条重建。
+    if (!/^parent .*$/m.test(newHeader))
+      throw new Error(`no parent line in ${oldCommit}`);
     newHeader = newHeader.replace(/^parent .*$/m, `parent ${newParent}`);
-    if (newHeader === before)
-      throw new Error(`could not rewrite parent line of ${oldCommit}`);
   }
   return git(['hash-object', '-t', 'commit', '-w', '--stdin'], {
     input: newHeader + '\n\n' + message,

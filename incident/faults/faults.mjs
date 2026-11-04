@@ -20,8 +20,13 @@
 // 「一次发布把缺陷带上去」区分开，否则测出来的是配置归因而不是发布归因。
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 
 // 工作区 2026-11-04 起搬到仓库外（incident/lab-paths.json 是路径唯一真相源），
 // 所以这里不再用 ../workspace/ 这种相对写法——相对写法在搬家后直接指向不存在的目录。
@@ -73,6 +78,32 @@ function gitRoot(...argv) {
     encoding: 'utf8',
     maxBuffer: 16 << 20,
   });
+}
+
+/**
+ * 注入台账，写在**仓库外**。
+ *
+ * 为什么要有它：实验室以前靠「把注入提交从 git 历史里剪掉」来防止 Agent 读到答案。
+ * 剪出来的历史让上一轮的残留异常变成「无法解释的现象」——Agent 把实验室自己造的假象
+ * 写进了报告的反对证据里（2026-11-04 复核件 D3，这是第 3 次栽在这类「实验室改历史」上）。
+ *
+ * 正确的做法是**不剪历史**：注入提交本来就该被 Agent 看见（它就是「一次发布」，
+ * 藏起来反而让「缺陷一直在线」和「一次发布把缺陷带上去」分不开）。
+ * 实验室自己的记录写在仓库外，既不进 Agent 的证据面，也不需要改历史。
+ */
+const LEDGER =
+  process.env.INCIDENT_LEDGER ?? join(LAB_PATHS.archiveDir, 'injections.log');
+
+function ledger(faultId, action, detail) {
+  try {
+    mkdirSync(dirname(LEDGER), { recursive: true });
+    appendFileSync(
+      LEDGER,
+      `${new Date().toISOString()}\t${faultId}\t${action}\t${detail}\n`,
+    );
+  } catch (err) {
+    process.stderr.write(`ledger write failed: ${err.message}\n`);
+  }
 }
 
 const cmd = process.argv[2];
@@ -153,9 +184,9 @@ switch (cmd) {
     // A body like "Fault-F2: unchecked downstream call raises NPE" hands over
     // the ground truth, so the message stays a plain feature subject.
     gitRoot('commit', '-m', fault.commit);
-    process.stdout.write(
-      `${id} injected and committed at ${git('rev-parse', '--short', 'HEAD')}\n`,
-    );
+    const sha = git('rev-parse', '--short', 'HEAD');
+    ledger(id, 'inject', `${sha} ${fault.commit}`);
+    process.stdout.write(`${id} injected and committed at ${sha}\n`);
     process.stdout.write(
       'now rebuild and redeploy:  ./lab.sh build target-service\n',
     );
@@ -166,7 +197,9 @@ switch (cmd) {
     const head = git('log', '-1', '--pretty=%s');
     if (head !== byId(id)?.commit) die(`HEAD is not the ${id} commit: ${head}`);
     gitRoot('revert', '--no-edit', 'HEAD');
-    process.stdout.write(`reverted ${id ?? head}\n`);
+    const sha = git('rev-parse', '--short', 'HEAD');
+    ledger(id, 'revert', `${sha} reverted ${head}`);
+    process.stdout.write(`reverted ${id ?? head} (${sha})\n`);
     break;
   }
 
@@ -203,9 +236,9 @@ switch (cmd) {
     writeFileSync(path, current.replace(fault.replace, fault.find));
     gitRoot('add', fault.file);
     gitRoot('commit', '-m', fault.restoreCommit);
-    process.stdout.write(
-      `${id} restored and committed at ${git('rev-parse', '--short', 'HEAD')}\n`,
-    );
+    const sha = git('rev-parse', '--short', 'HEAD');
+    ledger(id, 'restore', `${sha} ${fault.restoreCommit}`);
+    process.stdout.write(`${id} restored and committed at ${sha}\n`);
     process.stdout.write(
       'now rebuild and redeploy:  ./lab.sh build target-service\n',
     );
