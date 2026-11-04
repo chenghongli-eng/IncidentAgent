@@ -13,6 +13,8 @@
 - 系统设置及默认值：`src/runtime-config.ts`
 - 渠道能力与会话路由：`src/im-channel-capabilities.ts`、`src/channel-mount-service.ts`
 - StreamEvent：`shared/stream-event.ts`
+- 故障分析 Agent 实验室：`incident/README.md`（分层定位与改动政策）、
+  `incident/REAL-TARGET.md`（接入真实靶子的方案与合规前置）
 
 `docs/agent-first-architecture-plan.md` 和
 `docs/claude-code-plugin-automation-design.md` 是历史设计记录，不作为当前接口或数据结构的真相源。
@@ -58,7 +60,7 @@ Agent Profile（身份、四段 Prompt、能力策略）
 | `src/channel-reliability-store.ts` | Inbox、Turn、Outbox、Streaming Card 的持久状态机       |
 | `src/im-manager.ts`                | 多用户、多账号渠道连接池                               |
 | `src/agent-capability-preview.ts`  | Agent 最终上下文和能力预览                             |
-| `src/claude-context-resolver.ts`   | 兼容上下文、Skills 与来源解析                         |
+| `src/claude-context-resolver.ts`   | 兼容上下文、Skills 与来源解析                          |
 
 渠道实现位于：
 
@@ -280,18 +282,18 @@ Web 持久设置 > 环境变量 > 代码默认值
 
 常用环境变量：
 
-| 变量                        | 默认值                            | 说明                              |
-| --------------------------- | --------------------------------- | --------------------------------- |
-| `WEB_PORT`                  | `3000`                            | HTTP、WebSocket 端口              |
-| `WEB_SESSION_SECRET`        | 自动生成并持久化                  | Cookie 签名                       |
+| 变量                        | 默认值                          | 说明                              |
+| --------------------------- | ------------------------------- | --------------------------------- |
+| `WEB_PORT`                  | `3000`                          | HTTP、WebSocket 端口              |
+| `WEB_SESSION_SECRET`        | 自动生成并持久化                | Cookie 签名                       |
 | `CONTAINER_IMAGE`           | `helsome/miniclaw-agent:latest` | GitHub Actions 发布的 Runner 镜像 |
-| `CONTAINER_TIMEOUT`         | `1800000`                         | 默认运行超时                      |
-| `IDLE_TIMEOUT`              | `1800000`                         | 暖 Runner 空闲时间                |
-| `MAX_CONCURRENT_CONTAINERS` | `20`                              | Docker 并发                       |
-| `MAX_FILE_SIZE_MB`          | `50`                              | Web/IM 入站文件上限               |
-| `CORS_ALLOWED_ORIGINS`      | 仅 localhost                      | WebSocket Origin 白名单           |
-| `TRUST_PROXY`               | `false`                           | 是否信任反向代理来源头            |
-| `TZ`                        | 系统时区                          | 调度时区                          |
+| `CONTAINER_TIMEOUT`         | `1800000`                       | 默认运行超时                      |
+| `IDLE_TIMEOUT`              | `1800000`                       | 暖 Runner 空闲时间                |
+| `MAX_CONCURRENT_CONTAINERS` | `20`                            | Docker 并发                       |
+| `MAX_FILE_SIZE_MB`          | `50`                            | Web/IM 入站文件上限               |
+| `CORS_ALLOWED_ORIGINS`      | 仅 localhost                    | WebSocket Origin 白名单           |
+| `TRUST_PROXY`               | `false`                         | 是否信任反向代理来源头            |
+| `TZ`                        | 系统时区                        | 调度时区                          |
 
 Provider 和渠道账号应优先通过 Web 配置。Legacy `/api/config/user-im/*` 只用于兼容，
 新功能统一使用 `/api/channel-accounts`。
