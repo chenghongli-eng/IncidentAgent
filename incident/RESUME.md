@@ -490,6 +490,35 @@ F4 轮次可比）。**第三轮已开跑**，详见下节。
 4. **P1 / P2 本地跑起来是否要连内网服务？**（`config:` 段指向外部配置源，
    另有 Druid 多数据源、Redis、Kafka。）
 
+### 推送被拦下（待操作者明确授权）
+
+本仓库远端是**公开**的（`github.com/chenghongli-eng/IncidentAgent`，API 返回
+`"private": false`）。因此仓库内版本一律脱敏（项目用 `P1`–`P10`，无内部地址、
+产品代号、内部包名、同事姓名），完整版在仓库外
+`/mnt/my-work/incident-lab/target-survey/survey-2026-11-04.full.md`。
+推送整个 15 个提交范围时，**本会话的权限分类器以
+"公司项目派生数据推向公开远端"为由拦下**——这需要操作者**明确授权**
+"这些内容可以进公开仓库"。
+
+本地状态：全部已提交，工作区干净，**15 个提交待推送**（`origin/main..main`）。
+待授权后的推送命令：
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_gitee -o IdentitiesOnly=yes" \
+  git push -u origin main
+```
+
+（`~/.ssh/config` 里给 github.com 配的 IdentityFile 指向一个不存在的文件，
+实际可用的是 gitee 那把 key。）
+
+另外两件待决事项：
+
+- 已推送历史里有 12 个 transcript 含 `lihongcheng@richstonedt.com`。
+  这是**作者本人**的工作邮箱，且已在每个 commit 的作者字段里公开，不构成新增暴露；
+  但若要彻底清干净，需要像 L3 那样改写历史。
+- 更彻底的做法是**把仓库改成 private**。公开仓库放公司项目派生材料，
+  无论脱敏与否，都是长期风险面。
+
 ## 【2026-11-03】外层仓库历史改写：初始化时间前移到 2026-08-01
 
 ### 一句话
