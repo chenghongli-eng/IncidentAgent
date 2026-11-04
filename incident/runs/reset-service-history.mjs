@@ -45,7 +45,21 @@ const LAB_PATHS = JSON.parse(
 const REPO = process.env.TARGET_REPO ?? LAB_PATHS.workspaceRoot;
 const ARCHIVE_DIR =
   process.env.INCIDENT_HISTORY_ARCHIVE ?? LAB_PATHS.archiveDir;
-const ARCHIVE = join(ARCHIVE_DIR, 'service-repo-pre-reset.bundle');
+/**
+ * 归档文件名带时间戳，不能用固定名。
+ *
+ * 2026-11-04 踩过：第一次复位归档成 `service-repo-pre-reset.bundle`，
+ * 第二次复位（对照实验之后）**用同一个文件名覆盖了它**，
+ * 于是 11-04 那轮的缺陷提交对象连同第一次的归档一起没了。
+ * 归档是「实验室改过历史」的证据（D3 教训：不能靠剪历史来藏注入），
+ * 一次复位覆盖掉上一次的归档，等于把证据剪掉了——比不改还糟。
+ */
+const STAMP = new Date()
+  .toISOString()
+  .replace(/[-:]/g, '')
+  .replace(/\..+$/, 'Z');
+const ARCHIVE = join(ARCHIVE_DIR, `service-repo-pre-reset-${STAMP}.bundle`);
+const ARCHIVE_README = join(ARCHIVE_DIR, `README-reset-${STAMP}.txt`);
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // 缺陷文件：F2 注入改的就是它（与 incident/faults/faults.mjs 的 FAULTS[0].file 一致）。
@@ -267,13 +281,13 @@ if (DRY_RUN) {
 } else {
   mkdirSync(ARCHIVE_DIR, { recursive: true });
   writeFileSync(
-    join(ARCHIVE_DIR, 'README-reset.txt'),
-    'service-repo-pre-reset.bundle holds the service repo history as it was before the\n' +
-      "2026-11-04 baseline reset. It contains the previous rounds' fault commits\n" +
+    ARCHIVE_README,
+    `service-repo-pre-reset-${STAMP}.bundle holds the service repo history as it was\n` +
+      `before the ${STAMP} baseline reset. It contains the previous rounds' fault commits\n` +
       '(injection / restore). The lab ledger (injections.log, same directory) records\n' +
       'what was injected and when. Read them without touching the lab repo:\n' +
-      '  git bundle verify service-repo-pre-reset.bundle\n' +
-      '  git clone service-repo-pre-reset.bundle /tmp/old-service-repo\n',
+      `  git bundle verify service-repo-pre-reset-${STAMP}.bundle\n` +
+      `  git clone service-repo-pre-reset-${STAMP}.bundle /tmp/old-service-repo\n`,
   );
   git(['bundle', 'create', ARCHIVE, '--all']);
   git(['bundle', 'verify', ARCHIVE]);

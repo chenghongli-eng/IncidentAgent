@@ -40,7 +40,14 @@ const ARCHIVE_DIR =
   JSON.parse(
     readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
   ).archiveDir;
-const ARCHIVE = join(ARCHIVE_DIR, 'service-repo-pre-rebuild.bundle');
+// 归档名带时间戳：固定名会被下一次重建覆盖，把上一轮的归档连同它记录的
+// 注入提交一起抹掉（2026-11-04 在 reset 脚本上踩过这个坑）。
+const STAMP = new Date()
+  .toISOString()
+  .replace(/[-:]/g, '')
+  .replace(/\..+$/, 'Z');
+const ARCHIVE = join(ARCHIVE_DIR, `service-repo-pre-rebuild-${STAMP}.bundle`);
+const ARCHIVE_README = join(ARCHIVE_DIR, `README-rebuild-${STAMP}.txt`);
 const DRY_RUN = process.argv.includes('--dry-run');
 
 // Files whose historical blobs are re-baselined to the working-tree version.
@@ -250,12 +257,12 @@ if (DRY_RUN) {
 } else {
   mkdirSync(ARCHIVE_DIR, { recursive: true });
   writeFileSync(
-    join(ARCHIVE_DIR, 'README.txt'),
-    'service-repo-pre-rebuild.bundle holds the service repo history as it was before the\n' +
-      '2026-10-30 rebuild. The audit file and the claim ledger cite those SHAs.\n' +
+    ARCHIVE_README,
+    `service-repo-pre-rebuild-${STAMP}.bundle holds the service repo history as it was\n` +
+      `before the ${STAMP} rebuild. The audit file and the claim ledger cite those SHAs.\n` +
       'Read it without touching the lab repo:\n' +
-      '  git bundle verify service-repo-pre-rebuild.bundle\n' +
-      '  git clone service-repo-pre-rebuild.bundle /tmp/old-service-repo\n',
+      `  git bundle verify service-repo-pre-rebuild-${STAMP}.bundle\n` +
+      `  git clone service-repo-pre-rebuild-${STAMP}.bundle /tmp/old-service-repo\n`,
   );
   git(['bundle', 'create', ARCHIVE, '--all']);
   git(['bundle', 'verify', ARCHIVE]);

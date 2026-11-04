@@ -1,0 +1,154 @@
+{
+  "stamp": "2026-11-04T0754Z",
+  "fault": "F4",
+  "started_at": "2026-11-04T07:54:09.638Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向工作区：/mnt/my-work/incident-lab/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（6896436 → 6896775 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（171 分钟前）：c84400d 2026-11-04T13:03:20+08:00 fix(tool): default the 'logs first' window to the container start time"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=deepseek model=deepseek-v4-flash[1m]"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=/mnt/my-work/incident-lab/workspace，folder=flow-mvkttud1-ah1b）"
+    },
+    {
+      "id": "P11",
+      "ok": true,
+      "detail": "Miniclaw 服务在线（HTTP 200）"
+    },
+    {
+      "id": "P12",
+      "ok": true,
+      "detail": "provider 连通（1184ms，exactMatch=true）"
+    }
+  ],
+  "setup": {
+    "defect_state": "baseline",
+    "defect_commit": "4e7c499 2026-11-04T15:54:24+08:00 feat(order): enrich response with downstream shipping address",
+    "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5",
+    "note": "静默态：缺陷在线（判空兜底已删），order 2 不在压测路径，超时旋钮 2000"
+  },
+  "settle": {
+    "defect_committed_at": "2026-11-04T07:54:24.000Z",
+    "container_started_at": "2026-11-04T07:52:00.699Z",
+    "settle_ms": 1080000,
+    "settle_basis": "2026-11-04T07:54:24.000Z",
+    "waited_ms": 1076966
+  },
+  "injection": {
+    "fault": "F4",
+    "at": "2026-11-04T08:12:24.101Z",
+    "knob": "DOWNSTREAM_TIMEOUT_MS",
+    "from": "2000",
+    "to": "1",
+    "changed": [
+      "运行时旋钮"
+    ],
+    "unchanged": [
+      "代码",
+      "压测路径",
+      "数据"
+    ],
+    "probe": "注入后 order 3 = 500（缺陷在位）",
+    "note": "本轮只改运行时旋钮，代码一行没动"
+  },
+  "alert": {
+    "alertname": "HighServerErrorRate",
+    "state": "firing",
+    "activeAt": "2026-11-04T08:12:49.991948342Z",
+    "value": "4.1545570207590055e-01",
+    "observed_at": "2026-11-04T08:13:32.117Z"
+  },
+  "agent": {
+    "report": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/agent-report-2026-11-04T0754Z.md",
+    "started_at": "2026-11-04T08:13:32.126Z",
+    "finished_at": "2026-11-04T08:16:19.511Z",
+    "chars": 10536,
+    "stderr_tail": "run_finished reason=completed\nrun_finished reason=released\n",
+    "transcript": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/session-transcripts/2026-11-04T08-13-34-994Z_01a1a59e-df92-7890-815b-b47df035f4a1.jsonl"
+  },
+  "channel_audit": {
+    "transcript": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/data/sessions/flow-mvkttud1-ah1b/.claude/sessions/2026-11-04T08-13-34-994Z_01a1a59e-df92-7890-815b-b47df035f4a1.jsonl",
+    "tool_calls": 39,
+    "contaminating": 0,
+    "out_of_surface": 2,
+    "stale_path_uses": 0,
+    "verdict": "out_of_surface",
+    "findings": [
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "/mnt/my-work/incident-lab/",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-11-04T08:13:38.925Z",
+        "excerpt": "cat /mnt/my-work/incident-lab/workspace/../AGENTS.md 2>/dev/null; ls -la /mnt/my-work/incident-lab/; find /mnt/my-work/incident-lab -maxdepth 3 -iname \"AGENTS.md\" -o -maxdepth 3 -iname \"CLAUDE.md\""
+      },
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "/mnt/my-work/incident-lab",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-11-04T08:13:38.925Z",
+        "excerpt": "cat /mnt/my-work/incident-lab/workspace/../AGENTS.md 2>/dev/null; ls -la /mnt/my-work/incident-lab/; find /mnt/my-work/incident-lab -maxdepth 3 -iname \"AGENTS.md\" -o -maxdepth 3 -iname \"CLAUDE.md\""
+      }
+    ]
+  },
+  "restore": {
+    "ok": true,
+    "at": "2026-11-04T08:16:19.635Z",
+    "knob": "DOWNSTREAM_TIMEOUT_MS",
+    "to": "2000"
+  },
+  "score": {
+    "path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/score-2026-11-04T0754Z.json",
+    "rubric_version": "v6",
+    "root_cause_accuracy": 0,
+    "accuracy_tier": "miss",
+    "deployment_attribution": "unclear",
+    "deployment_attribution_correct": "unclear",
+    "deployment_expected": "excluded",
+    "needs_review": []
+  },
+  "round_valid": true,
+  "invalid_reason": null,
+  "manifest_path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/round-manifest-2026-11-04T0754Z.json",
+  "provider": {
+    "defaultProviderId": "45b34873576002a2",
+    "name": "deepseek",
+    "model": "deepseek-v4-flash[1m]",
+    "enabledCount": 2
+  },
+  "finished_at": "2026-11-04T08:17:17.637Z"
+}

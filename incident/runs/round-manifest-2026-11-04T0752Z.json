@@ -1,0 +1,75 @@
+{
+  "stamp": "2026-11-04T0752Z",
+  "fault": "F4",
+  "started_at": "2026-11-04T07:52:56.996Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向工作区：/mnt/my-work/incident-lab/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（6886486 → 6886826 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（170 分钟前）：c84400d 2026-11-04T13:03:20+08:00 fix(tool): default the 'logs first' window to the container start time"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=deepseek model=deepseek-v4-flash[1m]"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=/mnt/my-work/incident-lab/workspace，folder=flow-mvkttud1-ah1b）"
+    },
+    {
+      "id": "P11",
+      "ok": true,
+      "detail": "Miniclaw 服务在线（HTTP 200）"
+    },
+    {
+      "id": "P12",
+      "ok": true,
+      "detail": "provider 连通（2103ms，exactMatch=true）"
+    }
+  ],
+  "setup": null,
+  "settle": null,
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "channel_audit": null,
+  "restore": null,
+  "score": null,
+  "round_valid": true,
+  "invalid_reason": null,
+  "manifest_path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/round-manifest-2026-11-04T0752Z.json",
+  "provider": {
+    "defaultProviderId": "45b34873576002a2",
+    "name": "deepseek",
+    "model": "deepseek-v4-flash[1m]",
+    "enabledCount": 2
+  },
+  "finished_at": "2026-11-04T07:53:12.478Z"
+}

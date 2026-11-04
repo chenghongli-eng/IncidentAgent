@@ -1,0 +1,76 @@
+{
+  "generated_at": "2026-11-04T07:48:29.500Z",
+  "warmup_s": 60,
+  "window_s": 300,
+  "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5",
+  "arms": [
+    {
+      "arm": "A",
+      "label": "缺陷在线 + 旋钮 2000ms",
+      "expect": "0 个 500",
+      "why": "必要条件单独不成立：缺陷在，但没有把下游读超时压到 1ms",
+      "code_state": "defect",
+      "timeout_ms": "2000",
+      "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5",
+      "container_started_at": "2026-11-04T07:28:03.471Z",
+      "window": {
+        "from": "2026-11-04T07:29:03.471Z",
+        "to": "2026-11-04T07:34:03.471Z"
+      },
+      "counts": {
+        "fivexx_log": 0,
+        "null_pointer": 0,
+        "read_timed_out": 0,
+        "loaded_ok": 373
+      },
+      "prometheus_5xx_ratio_max": 0,
+      "prometheus_points": 0
+    },
+    {
+      "arm": "B",
+      "label": "缺陷撤掉 + 旋钮 1ms",
+      "expect": "0 个 500",
+      "why": "触发源单独不成立：超时压到 1ms，但判空兜底还在 → 超时被降级成 UNKNOWN",
+      "code_state": "baseline",
+      "timeout_ms": "1",
+      "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5",
+      "container_started_at": "2026-11-04T07:34:08.588Z",
+      "window": {
+        "from": "2026-11-04T07:35:08.588Z",
+        "to": "2026-11-04T07:40:08.588Z"
+      },
+      "counts": {
+        "fivexx_log": 0,
+        "null_pointer": 0,
+        "read_timed_out": 174,
+        "loaded_ok": 374
+      },
+      "prometheus_5xx_ratio_max": 0,
+      "prometheus_points": 0
+    },
+    {
+      "arm": "C",
+      "label": "缺陷在线 + 旋钮 1ms",
+      "expect": "大量 500",
+      "why": "两者叠加：超时 → fetchProfile 返回 null → 未判空解引用 → NPE → 500",
+      "code_state": "defect",
+      "timeout_ms": "1",
+      "load_paths": "/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5",
+      "container_started_at": "2026-11-04T07:40:11.634Z",
+      "window": {
+        "from": "2026-11-04T07:41:11.634Z",
+        "to": "2026-11-04T07:46:11.634Z"
+      },
+      "counts": {
+        "fivexx_log": 161,
+        "null_pointer": 161,
+        "read_timed_out": 161,
+        "loaded_ok": 213
+      },
+      "prometheus_5xx_ratio_max": 0.4360205027379358,
+      "prometheus_points": 11
+    }
+  ],
+  "correction_of": "incident/runs/control-arms-20261104T074613Z.json",
+  "correction_reason": "第一版把 metrics range 的返回形状认成 {data:{result}}，比例被静默读成 0；日志侧计数未受影响。本次只重算 Prometheus 比例。"
+}
