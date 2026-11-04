@@ -64,13 +64,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { homedir } from 'node:os';
-import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
 const require = createRequire(import.meta.url);
-const distUrl = (name) =>
-  pathToFileURL(new URL(`../../dist/${name}`, import.meta.url).pathname).href;
 
 /** better-sqlite3 是可选依赖：缺了不能崩在这里，要走到扫描面时报「跳过」并 exit 1。 */
 let Database = null;
@@ -81,7 +78,6 @@ try {
 }
 
 const WORKSPACE_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
-const ACTOR = { id: '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4', role: 'admin' };
 const USER_ID = '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4';
 const REPO = join(ROOT, 'incident/workspace/target-service');
 const SKILL_DIR = join(ROOT, 'data/skills', USER_ID);
@@ -98,6 +94,42 @@ const SESSIONS_ROOT =
 
 /** 扫不到的面。空数组才允许报告「0 命中」——扫不到的面等于没扫。 */
 const skipped = [];
+
+/**
+ * 本工作区（以及同 folder 的所有 jid）的 jid 集合。
+ *
+ * 聊天历史面与工作区记忆面都要用它：Agent 跑在哪个 jid 上，答案就可能落在哪个 jid 里。
+ * 同 folder 的 Web / IM 绑定、以及 Runtime Session 的虚拟 jid 都要算进来。
+ *
+ * 顺带把 folder 记在模块级变量上——Pi 会话记录面要用它定位 data/sessions/<folder>/。
+ */
+let workspaceFolder = null;
+function workspaceJidSet() {
+  if (!Database) throw new Error('better-sqlite3 不可用');
+  const raw = new Database(DB_PATH, { readonly: true });
+  try {
+    const grp = raw
+      .prepare('SELECT folder FROM registered_groups WHERE jid = ?')
+      .get(WORKSPACE_JID);
+    workspaceFolder = grp?.folder ?? null;
+    if (!workspaceFolder)
+      throw new Error(`工作区 ${WORKSPACE_JID} 没有登记 folder`);
+    const jids = new Set(
+      raw
+        .prepare('SELECT jid FROM registered_groups WHERE folder = ?')
+        .all(workspaceFolder)
+        .map((r) => r.jid),
+    );
+    for (const a of raw
+      .prepare('SELECT chat_jid, id FROM agents WHERE group_folder = ?')
+      .all(workspaceFolder)) {
+      jids.add(`${a.chat_jid}#agent:${a.id}`);
+    }
+    return { folder: workspaceFolder, jids: [...jids] };
+  } finally {
+    raw.close();
+  }
+}
 
 /**
  * 模式表。每条都写清「为什么它是答案」，否则后人加规则时会把正常内容当泄漏。
@@ -307,22 +339,34 @@ if (existsSync(REPO)) {
   scan('history', '<git log --all -p>', history);
 }
 
-// ---- 2. 工作区记忆（含软删条目）----
+// ---- 2. 工作区记忆（**含软删条目**）----
+//
+// 【2026-11-04 补缺口 ①】原来这里调的是 memory.listWorkspaceMemory，
+// 而它只返回 status='active' 的条目——软删条目的正文它根本看不见。
+// 但底座的 forget 只把 status 置成 'deleted'，正文原样留在表里：
+// **扫不到不等于不在**，这正是「扫不到的面等于没扫」的那一类缺口。
+// 之前靠 memory-de-leak.mjs 的 scrubTombstone 兜底，那是流程约定，不是闸门。
+// 现在直接查表，不按 status 过滤：软删、superseded、conflicted 一起扫。
 try {
-  const db = await import(distUrl('db.js'));
-  db.initDatabase();
-  const memory = await import(distUrl('memory-service.js'));
-  const res = memory.listWorkspaceMemory({
-    actor: ACTOR,
-    workspaceJid: WORKSPACE_JID,
-    limit: 100,
-  });
-  for (const item of res.items ?? []) {
-    scan(
-      'memory',
-      `memory:${item.kind}/${item.status}/${item.id}`,
-      `${item.title ?? ''}\n${item.content ?? ''}`,
-    );
+  const { jids } = workspaceJidSet();
+  const raw = new Database(DB_PATH, { readonly: true });
+  try {
+    const rows = raw
+      .prepare(
+        `SELECT workspace_jid, id, kind, status, title, content
+           FROM workspace_memory_items
+          WHERE workspace_jid IN (${jids.map(() => '?').join(',')})`,
+      )
+      .all(...jids);
+    for (const row of rows) {
+      scan(
+        'memory',
+        `memory:${row.workspace_jid}/${row.kind}/${row.status}/${row.id}`,
+        `${row.title ?? ''}\n${row.content ?? ''}`,
+      );
+    }
+  } finally {
+    raw.close();
   }
 } catch (err) {
   skipped.push(`工作区记忆（${err.message}）`);
@@ -405,30 +449,12 @@ if (!existsSync(PROFILE_SRC)) {
 // ---- 8. 聊天历史（上一轮的问题与根因报告都在这里）----
 // 阻断判据是**结构性**的：闸门运行时这个工作区的 chat 必须一条消息都没有。
 // 关键词只能给出更具体的理由，抓不抓得住上一轮答案靠的是「非空」。
-let workspaceFolder = null;
 try {
   if (!Database) throw new Error('better-sqlite3 不可用');
   const raw = new Database(DB_PATH, { readonly: true });
   try {
-    const grp = raw
-      .prepare('SELECT folder FROM registered_groups WHERE jid = ?')
-      .get(WORKSPACE_JID);
-    workspaceFolder = grp?.folder ?? null;
-    if (!workspaceFolder)
-      throw new Error(`工作区 ${WORKSPACE_JID} 没有登记 folder`);
     // 同 folder 的所有 jid（Web + IM 绑定）以及各 Runtime Session 的虚拟 jid 都要算进来。
-    const jids = new Set(
-      raw
-        .prepare('SELECT jid FROM registered_groups WHERE folder = ?')
-        .all(workspaceFolder)
-        .map((r) => r.jid),
-    );
-    for (const a of raw
-      .prepare('SELECT chat_jid, id FROM agents WHERE group_folder = ?')
-      .all(workspaceFolder)) {
-      jids.add(`${a.chat_jid}#agent:${a.id}`);
-    }
-    const list = [...jids];
+    const list = workspaceJidSet().jids;
     const rows = raw
       .prepare(
         `SELECT chat_jid, timestamp, is_from_me, content FROM messages

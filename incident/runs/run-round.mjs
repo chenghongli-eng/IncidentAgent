@@ -40,17 +40,28 @@
  *   node incident/runs/run-round.mjs --fault F2 --settle-ms 960000
  */
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { scoreReport } = await import(new URL('./score-report.mjs', import.meta.url).href);
+const { scoreReport } = await import(
+  new URL('./score-report.mjs', import.meta.url).href
+);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const LAB = join(ROOT, 'incident');
 const RUNS = join(LAB, 'runs');
-const LAB_ENV = process.env.LAB_ENV ?? join(homedir(), '.config/miniclaw-lab/lab.env');
+const LAB_ENV =
+  process.env.LAB_ENV ?? join(homedir(), '.config/miniclaw-lab/lab.env');
 // 用绝对路径：这几步的 cwd 是 incident/，相对路径会拼成 incident/incident/...
 const FAULTS_MJS = join(ROOT, 'incident/faults/faults.mjs');
 const WORKSPACE = join(LAB, 'workspace');
@@ -59,8 +70,8 @@ const TARGET = 'http://127.0.0.1:8080';
 const PROM = 'http://127.0.0.1:9090';
 const MINICLAW = 'http://127.0.0.1:3000';
 const RATIO_QUERY =
-  'sum(rate(http_server_requests_seconds_count{application="target-service",status=~"5.."}[1m]))'
-  + '/clamp_min(sum(rate(http_server_requests_seconds_count{application="target-service"}[1m])),0.001)';
+  'sum(rate(http_server_requests_seconds_count{application="target-service",status=~"5.."}[1m]))' +
+  '/clamp_min(sum(rate(http_server_requests_seconds_count{application="target-service"}[1m])),0.001)';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -87,7 +98,8 @@ const SCORE_PATH = join(RUNS, `score-${STAMP}.json`);
 const MANIFEST_PATH = join(RUNS, `round-manifest-${STAMP}.json`);
 
 const log = (...a) => console.log(...a);
-const section = (t) => log(`\n── ${t} ${'─'.repeat(Math.max(0, 60 - t.length))}`);
+const section = (t) =>
+  log(`\n── ${t} ${'─'.repeat(Math.max(0, 60 - t.length))}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // bash -c 而不是 bash -lc：登录 shell 会把 PATH 换成 /usr/bin/node (v20)，
@@ -95,14 +107,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 脚本里的 node 调用一律用 process.execPath，不靠 PATH。
 function sh(cmd, { cwd = ROOT, timeout = 180000 } = {}) {
   const r = spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8', timeout });
-  return { code: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+  return {
+    code: r.status,
+    out: (r.stdout || '').trim(),
+    err: (r.stderr || '').trim(),
+  };
 }
 
 const NODE = process.execPath;
 
 function mustSh(cmd, opts) {
   const r = sh(cmd, opts);
-  if (r.code !== 0) throw new Error(`命令失败 (exit ${r.code}): ${cmd}\n${r.err || r.out}`);
+  if (r.code !== 0)
+    throw new Error(`命令失败 (exit ${r.code}): ${cmd}\n${r.err || r.out}`);
   return r;
 }
 
@@ -161,7 +178,9 @@ async function probeMiniclaw() {
       { headers: cookie ? { Cookie: cookie } : undefined },
       2,
     );
-    return res.ok ? { ok: true, why: `HTTP ${res.status}` } : { ok: false, why: `HTTP ${res.status}` };
+    return res.ok
+      ? { ok: true, why: `HTTP ${res.status}` }
+      : { ok: false, why: `HTTP ${res.status}` };
   } catch (err) {
     const cause = err?.cause?.message ? `（${err.cause.message}）` : '';
     return { ok: false, why: `${err.message}${cause}` };
@@ -192,19 +211,32 @@ function digAgentApiErrors(agentStartIso) {
         if (!f.endsWith('.jsonl')) continue;
         const p = join(cand, f);
         if (statSync(p).mtimeMs < startMs) continue;
-        if (!transcript || statSync(p).mtimeMs > statSync(transcript).mtimeMs) transcript = p;
+        if (!transcript || statSync(p).mtimeMs > statSync(transcript).mtimeMs)
+          transcript = p;
       }
     }
   }
-  if (!transcript) return { transcript: null, apiErrors: null, why: '没找到本轮的 session transcript' };
+  if (!transcript)
+    return {
+      transcript: null,
+      apiErrors: null,
+      why: '没找到本轮的 session transcript',
+    };
   const errors = [];
   for (const line of readFileSync(transcript, 'utf8').split('\n')) {
     if (!line.trim()) continue;
     let r;
-    try { r = JSON.parse(line); } catch { continue; }
+    try {
+      r = JSON.parse(line);
+    } catch {
+      continue;
+    }
     const msg = r?.message;
     if (msg?.stopReason !== 'error') continue;
-    errors.push({ at: msg.timestamp ?? r.timestamp, error: String(msg.errorMessage ?? '').slice(0, 300) });
+    errors.push({
+      at: msg.timestamp ?? r.timestamp,
+      error: String(msg.errorMessage ?? '').slice(0, 300),
+    });
   }
   return { transcript, apiErrors: errors };
 }
@@ -251,6 +283,24 @@ function fail(msg) {
   throw new Error(msg);
 }
 
+/**
+ * 从 smoke 脚本的 stdout 里挑出那段 JSON。
+ *
+ * 为什么要单独解析而不是直接 JSON.parse：脚本只打印一段 JSON，但 tsx 可能带上别的行。
+ * 切不出来就返回 null——闸门必须能区分「脚本没输出」和「输出了但没完成」，
+ * 不能在两者之间猜一个。
+ */
+function parseSmokeJson(out) {
+  const start = out.indexOf('{');
+  const end = out.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+  try {
+    return JSON.parse(out.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
 // ── 旋钮文件 ──────────────────────────────────────────────────────────────
 function readKnob() {
   return Object.fromEntries(
@@ -282,7 +332,9 @@ function setKnob(key, value) {
  * 佐证，不是「读不到」。所以空结果按 0 算，别把它当成读失败。
  */
 async function readRatio() {
-  const r = await json(`${PROM}/api/v1/query?query=${encodeURIComponent(RATIO_QUERY)}`);
+  const r = await json(
+    `${PROM}/api/v1/query?query=${encodeURIComponent(RATIO_QUERY)}`,
+  );
   const v = r.data?.result?.[0]?.value?.[1];
   return v === undefined ? 0 : Number(v);
 }
@@ -304,7 +356,9 @@ async function orderStatus(id) {
 async function waitContainerHealthy(timeoutMs = 180000) {
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
-    const s = sh(`docker inspect target-service --format '{{.State.Health.Status}}'`);
+    const s = sh(
+      `docker inspect target-service --format '{{.State.Health.Status}}'`,
+    );
     if (s.out.trim() === 'healthy') return true;
     await sleep(3000);
   }
@@ -313,7 +367,9 @@ async function waitContainerHealthy(timeoutMs = 180000) {
 
 /** 容器启动时刻（部署锚点）。 */
 function containerStartedAt() {
-  const out = sh(`docker inspect target-service --format '{{.State.StartedAt}}'`).out.trim();
+  const out = sh(
+    `docker inspect target-service --format '{{.State.StartedAt}}'`,
+  ).out.trim();
   const t = Date.parse(out);
   return Number.isNaN(t) ? null : t;
 }
@@ -321,7 +377,8 @@ function containerStartedAt() {
 /** 重建容器并等它真的可用。 */
 async function recreate() {
   mustSh('./lab.sh recreate target-service', { cwd: LAB });
-  if (!(await waitContainerHealthy())) fail('target-service 重建后没有变 healthy。');
+  if (!(await waitContainerHealthy()))
+    fail('target-service 重建后没有变 healthy。');
 }
 
 // ── 故障规格 ──────────────────────────────────────────────────────────────
@@ -336,10 +393,14 @@ const FAULTS = {
     async setup() {
       const knob = readKnob();
       if (knob.DOWNSTREAM_TIMEOUT_MS !== '2000') {
-        fail(`静默态要求 DOWNSTREAM_TIMEOUT_MS=2000，实际 ${knob.DOWNSTREAM_TIMEOUT_MS}`);
+        fail(
+          `静默态要求 DOWNSTREAM_TIMEOUT_MS=2000，实际 ${knob.DOWNSTREAM_TIMEOUT_MS}`,
+        );
       }
       if ((knob.LOAD_PATHS ?? '').includes('/api/orders/2')) {
-        fail('静默态要求 order 2 不在 LOAD_PATHS 里——它在的话缺陷会自己发作，那是 F2 的场景。');
+        fail(
+          '静默态要求 order 2 不在 LOAD_PATHS 里——它在的话缺陷会自己发作，那是 F2 的场景。',
+        );
       }
       return { note: '台子已在静默态：缺陷在线但 order 2 不在压测路径' };
     },
@@ -366,21 +427,29 @@ const FAULTS = {
     async restore() {
       setKnob('DOWNSTREAM_TIMEOUT_MS', '2000');
       await recreate();
-      if (!(await waitHealthyBaseline())) fail('恢复后 5xx 比例没回到 0。实验台不干净，下一轮不能直接开跑。');
+      if (!(await waitHealthyBaseline()))
+        fail('恢复后 5xx 比例没回到 0。实验台不干净，下一轮不能直接开跑。');
       return { knob: 'DOWNSTREAM_TIMEOUT_MS', to: '2000' };
     },
     /** 开跑前这条故障特有的不变量：窗口内没有任何代码变更。 */
     async checkWindow() {
-      const head = mustSh(`git -C ${WORKSPACE} log -1 --format='%h %aI %s'`).out;
-      const ageMin = (Date.now() - new Date(head.split(' ')[1]).getTime()) / 60000;
+      const head = mustSh(
+        `git -C ${WORKSPACE} log -1 --format='%h %aI %s'`,
+      ).out;
+      const ageMin =
+        (Date.now() - new Date(head.split(' ')[1]).getTime()) / 60000;
       if (ageMin < 15) {
         fail(
-          `服务仓库 HEAD ${head} 只有 ${ageMin.toFixed(1)} 分钟前提交，落在 15 分钟窗口内。\n`
-          + '这一轮测的就不是「Agent 会不会误归因到发布」，而是「Agent 会不会做时间对齐」。\n'
-          + `等 ${Math.ceil(15 - ageMin)} 分钟让这次提交滑出窗口再开跑（或者先跑别的故障类型）。`,
+          `服务仓库 HEAD ${head} 只有 ${ageMin.toFixed(1)} 分钟前提交，落在 15 分钟窗口内。\n` +
+            '这一轮测的就不是「Agent 会不会误归因到发布」，而是「Agent 会不会做时间对齐」。\n' +
+            `等 ${Math.ceil(15 - ageMin)} 分钟让这次提交滑出窗口再开跑（或者先跑别的故障类型）。`,
         );
       }
-      record('P8', true, `服务仓库 HEAD 在窗口外（${ageMin.toFixed(0)} 分钟前）：${head}`);
+      record(
+        'P8',
+        true,
+        `服务仓库 HEAD 在窗口外（${ageMin.toFixed(0)} 分钟前）：${head}`,
+      );
       return head;
     },
   },
@@ -395,23 +464,32 @@ const FAULTS = {
     async setup() {
       const knob = readKnob();
       if (knob.DOWNSTREAM_TIMEOUT_MS !== '2000') {
-        fail(`F2 那一轮运行时配置必须是干净基线，实际 DOWNSTREAM_TIMEOUT_MS=${knob.DOWNSTREAM_TIMEOUT_MS}。`
-          + '配置也变了的话，这一轮测的是「两个变更里挑哪个」，不是发布归因。');
+        fail(
+          `F2 那一轮运行时配置必须是干净基线，实际 DOWNSTREAM_TIMEOUT_MS=${knob.DOWNSTREAM_TIMEOUT_MS}。` +
+            '配置也变了的话，这一轮测的是「两个变更里挑哪个」，不是发布归因。',
+        );
       }
       // 1. 把判空兜底加回去并提交——缺陷下线，代码回到基线
       const restore = sh(`${NODE} ${FAULTS_MJS} restore F2`, { cwd: LAB });
-      if (restore.code !== 0) fail(`faults.mjs restore F2 失败：\n${restore.err || restore.out}`);
+      if (restore.code !== 0)
+        fail(`faults.mjs restore F2 失败：\n${restore.err || restore.out}`);
       // 2. order 2 放回压测路径（静默态就要一直压着它）
       //    放在重建之前：这样只需要一次容器启动，部署锚点才是干净的一个。
-      setKnob('LOAD_PATHS', '/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5');
+      setKnob(
+        'LOAD_PATHS',
+        '/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5',
+      );
       // 3. 用基线代码重建镜像并部署
       mustSh('./lab.sh build target-service', { cwd: LAB, timeout: 900000 });
-      if (!(await waitContainerHealthy())) fail('重建后 target-service 没有变 healthy。');
+      if (!(await waitContainerHealthy()))
+        fail('重建后 target-service 没有变 healthy。');
 
       const o2 = await orderStatus(2);
       if (o2 !== 200) {
-        fail(`静默态要求 order 2 返回 200（基线代码降级成 UNKNOWN），实际 ${o2}。`
-          + '基线没部署成功，这一轮测的就不是「一次发布把缺陷带上去」。');
+        fail(
+          `静默态要求 order 2 返回 200（基线代码降级成 UNKNOWN），实际 ${o2}。` +
+            '基线没部署成功，这一轮测的就不是「一次发布把缺陷带上去」。',
+        );
       }
       return {
         source_restored: restore.out,
@@ -446,16 +524,22 @@ const FAULTS = {
         settle_basis: new Date(newest).toISOString(),
       };
       if (waitMs <= 0) return { ...detail, waited_ms: 0 };
-      log(`  静默态坐稳中：等 ${Math.ceil(waitMs / 1000)} 秒（到 ${new Date(newest + SETTLE_MS).toISOString()}）`);
+      log(
+        `  静默态坐稳中：等 ${Math.ceil(waitMs / 1000)} 秒（到 ${new Date(newest + SETTLE_MS).toISOString()}）`,
+      );
       await sleep(waitMs);
       return { ...detail, waited_ms: Math.round(waitMs) };
     },
     async inject() {
       const inject = sh(`${NODE} ${FAULTS_MJS} inject F2`, { cwd: LAB });
-      if (inject.code !== 0) fail(`faults.mjs inject F2 失败：\n${inject.err || inject.out}`);
-      const commit = mustSh(`git -C ${WORKSPACE} log -1 --format='%h %aI %s'`).out;
+      if (inject.code !== 0)
+        fail(`faults.mjs inject F2 失败：\n${inject.err || inject.out}`);
+      const commit = mustSh(
+        `git -C ${WORKSPACE} log -1 --format='%h %aI %s'`,
+      ).out;
       mustSh('./lab.sh build target-service', { cwd: LAB, timeout: 900000 });
-      if (!(await waitContainerHealthy())) fail('重建后 target-service 没有变 healthy。');
+      if (!(await waitContainerHealthy()))
+        fail('重建后 target-service 没有变 healthy。');
 
       const o2 = await orderStatus(2);
       if (o2 !== 500) fail(`注入后 order 2 返回 ${o2}，不是 500。缺陷没上线。`);
@@ -468,17 +552,28 @@ const FAULTS = {
     },
     async restore() {
       // 恢复到公共静默态：缺陷在线（源码与镜像都是缺陷版）、order 2 退出压测路径
-      setKnob('LOAD_PATHS', '/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5');
+      setKnob(
+        'LOAD_PATHS',
+        '/api/orders/1,/api/orders/3,/api/orders/4,/api/orders/5',
+      );
       await recreate();
-      if (!(await waitHealthyBaseline())) fail('恢复后 5xx 比例没回到 0。实验台不干净，下一轮不能直接开跑。');
+      if (!(await waitHealthyBaseline()))
+        fail('恢复后 5xx 比例没回到 0。实验台不干净，下一轮不能直接开跑。');
       return { load_paths: readKnob().LOAD_PATHS };
     },
     async checkWindow() {
       // F2 要求的是反过来的不变量：被发布的那个提交必须**在**窗口里，
       // 而那个提交在注入时才产生，所以这里只能校验「现在还没有代码变更」。
-      const head = mustSh(`git -C ${WORKSPACE} log -1 --format='%h %aI %s'`).out;
-      const ageMin = (Date.now() - new Date(head.split(' ')[1]).getTime()) / 60000;
-      record('P8', true, `服务仓库 HEAD（${ageMin.toFixed(0)} 分钟前）：${head}`);
+      const head = mustSh(
+        `git -C ${WORKSPACE} log -1 --format='%h %aI %s'`,
+      ).out;
+      const ageMin =
+        (Date.now() - new Date(head.split(' ')[1]).getTime()) / 60000;
+      record(
+        'P8',
+        true,
+        `服务仓库 HEAD（${ageMin.toFixed(0)} 分钟前）：${head}`,
+      );
       return head;
     },
   },
@@ -486,7 +581,10 @@ const FAULTS = {
 
 async function main() {
   const spec = FAULTS[FAULT];
-  if (!spec) fail(`还没实现的故障类型：${FAULT}。当前支持：${Object.keys(FAULTS).join(', ')}`);
+  if (!spec)
+    fail(
+      `还没实现的故障类型：${FAULT}。当前支持：${Object.keys(FAULTS).join(', ')}`,
+    );
   activeSpec = spec;
 
   // ───────────────────────────────────────────────────────────
@@ -498,13 +596,21 @@ async function main() {
 
   const ps = mustSh(`docker ps --format '{{.Names}}\t{{.Status}}'`);
   const containers = Object.fromEntries(
-    ps.out.split('\n').filter(Boolean).map((l) => {
-      const [n, ...rest] = l.split('\t');
-      return [n, rest.join('\t')];
-    }),
+    ps.out
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        const [n, ...rest] = l.split('\t');
+        return [n, rest.join('\t')];
+      }),
   );
-  for (const name of ['target-service', 'incident-prometheus', 'incident-alertmanager']) {
-    if (!containers[name]) fail(`容器 ${name} 没在跑。开跑前先 incident/lab.sh up -d。`);
+  for (const name of [
+    'target-service',
+    'incident-prometheus',
+    'incident-alertmanager',
+  ]) {
+    if (!containers[name])
+      fail(`容器 ${name} 没在跑。开跑前先 incident/lab.sh up -d。`);
   }
   record('P1', true, `三个容器都在跑：${Object.keys(containers).join(', ')}`);
 
@@ -512,7 +618,9 @@ async function main() {
     `docker inspect target-service --format '{{range .Mounts}}{{.Source}}->{{.Destination}} {{end}}'`,
   );
   if (!mounts.out.includes(join(ROOT, 'incident'))) {
-    fail(`target-service 的挂载源不在当前仓库路径下：${mounts.out}\n搬家后常见静默损坏，先按 RESUME.md 的验收清单修。`);
+    fail(
+      `target-service 的挂载源不在当前仓库路径下：${mounts.out}\n搬家后常见静默损坏，先按 RESUME.md 的验收清单修。`,
+    );
   }
   record('P2', true, `挂载源指向当前仓库：${mounts.out}`);
 
@@ -524,7 +632,9 @@ async function main() {
   const size1 = Number(stat1.out);
   const size2 = Number(sh(`stat -c '%s' ${appLog}`).out);
   if (!(size2 > size1)) {
-    fail(`app.log 3 秒内没有增长（${size1} → ${size2}）。容器 healthy 不代表日志通道活着——文件属主不对时容器会退回 stdout。`);
+    fail(
+      `app.log 3 秒内没有增长（${size1} → ${size2}）。容器 healthy 不代表日志通道活着——文件属主不对时容器会退回 stdout。`,
+    );
   }
   record('P3', true, `app.log 在增长（${size1} → ${size2} 字节）`);
 
@@ -536,14 +646,22 @@ async function main() {
   if (baselineRatio !== 0) {
     log(`  基线 5xx 比例 ${baselineRatio}，等窗口滚出上一次探针的残留…`);
     if (!(await waitHealthyBaseline(90000))) {
-      fail(`基线 5xx 比例 90 秒内没回到 0（当前 ${await readRatio()}）。上一轮故障态没清干净。`);
+      fail(
+        `基线 5xx 比例 90 秒内没回到 0（当前 ${await readRatio()}）。上一轮故障态没清干净。`,
+      );
     }
   }
   record('P4', true, '基线 5xx 比例 = 0');
 
   const alerts0 = await json(`${PROM}/api/v1/alerts`);
-  if (alerts0.data.alerts.some((a) => a.labels?.alertname === 'HighServerErrorRate')) {
-    fail('开跑前 HighServerErrorRate 已经在 firing。实验台不干净，这一轮的结果不可用。');
+  if (
+    alerts0.data.alerts.some(
+      (a) => a.labels?.alertname === 'HighServerErrorRate',
+    )
+  ) {
+    fail(
+      '开跑前 HighServerErrorRate 已经在 firing。实验台不干净，这一轮的结果不可用。',
+    );
   }
   record('P5', true, '开跑前没有告警在 firing');
 
@@ -554,10 +672,13 @@ async function main() {
   // 上一轮失败时服务端会「retry silently with backoff」同一条消息。
   // 开跑前先停掉它，否则它会在本轮期间插进来跑一个不受 runner 控制的 turn。
   try {
-    const stop = await fetchRetry(`${MINICLAW}/api/groups/${encodeURIComponent(WS_JID)}/stop`, {
-      method: 'POST',
-      headers: { Cookie: cookie },
-    });
+    const stop = await fetchRetry(
+      `${MINICLAW}/api/groups/${encodeURIComponent(WS_JID)}/stop`,
+      {
+        method: 'POST',
+        headers: { Cookie: cookie },
+      },
+    );
     log(`  已停止该工作区的残留队列（HTTP ${stop.status}）`);
   } catch (err) {
     log(`  ⚠ 停止残留队列失败（继续）：${err.message}`);
@@ -567,24 +688,39 @@ async function main() {
 
   // 记录本轮实际使用的 provider/模型。换模型会让不同轮次不可比，
   // manifest 必须带上，指标表才能说清楚「这个数字是哪个模型跑出来的」。
-  const prov = await json(`${MINICLAW}/api/config/claude/providers`, { withCookie: true });
-  const activeProvider = prov.providers?.find((p) => p.id === prov.defaultProviderId);
-  if (!activeProvider) fail(`找不到当前默认 provider（${prov.defaultProviderId}）。`);
+  const prov = await json(`${MINICLAW}/api/config/claude/providers`, {
+    withCookie: true,
+  });
+  const activeProvider = prov.providers?.find(
+    (p) => p.id === prov.defaultProviderId,
+  );
+  if (!activeProvider)
+    fail(`找不到当前默认 provider（${prov.defaultProviderId}）。`);
   manifest.provider = {
     defaultProviderId: prov.defaultProviderId,
     name: activeProvider.name ?? null,
     model: activeProvider.anthropicModel ?? null,
     enabledCount: prov.enabledCount ?? null,
   };
-  record('P10', true, `provider=${activeProvider.name} model=${activeProvider.anthropicModel}`);
+  record(
+    'P10',
+    true,
+    `provider=${activeProvider.name} model=${activeProvider.anthropicModel}`,
+  );
 
   const grp = groups?.groups?.[WS_JID];
   if (!grp) fail(`找不到工作区 ${WS_JID}，Agent 无处可跑。`);
   const expectCwd = WORKSPACE;
   if (grp.custom_cwd !== expectCwd) {
-    fail(`工作区 custom_cwd=${grp.custom_cwd}，不是 ${expectCwd}。Agent 会拿到一个空壳目录。`);
+    fail(
+      `工作区 custom_cwd=${grp.custom_cwd}，不是 ${expectCwd}。Agent 会拿到一个空壳目录。`,
+    );
   }
-  record('P9', true, `工作区就位（custom_cwd=${grp.custom_cwd}，folder=${grp.folder}）`);
+  record(
+    'P9',
+    true,
+    `工作区就位（custom_cwd=${grp.custom_cwd}，folder=${grp.folder}）`,
+  );
 
   // P11：Miniclaw 服务本身在线。
   // runner 不负责起服务，只假设 3000 端口上有东西在听；而 mc-auth.mjs 只读 DB 造 cookie，
@@ -597,6 +733,36 @@ async function main() {
     );
   }
   record('P11', true, `Miniclaw 服务在线（${probe.why}）`);
+
+  // P12：provider 真的能回话——也就是额度到底恢复了没有。
+  //
+  // 11-02 有两轮撞在这个上面：0802Z 跑到最后一刻才发现，1000Z 在轮次中途才发现
+  // （429），两轮都白等，而闸门当时是全过的。「额度没恢复」这件事在开跑前
+  // 就能测出来，只是那时还是靠人肉跑 `npm run test:real-model` 并记得看结果。
+  // 现在它是闸门的一部分：额度不通就不开跑。
+  //
+  // 代价要说清楚：这是一次**真实的模型请求**，会产生真实费用。换来的是「不白等一轮」。
+  // 脚本只吐布尔值，不吐 endpoint / 模型名 / 凭据 / 回复原文。
+  const smoke = sh(
+    `${NODE} node_modules/tsx/dist/cli.mjs scripts/test-real-model-smoke.ts`,
+    {
+      timeout: 180000,
+    },
+  );
+  const smokeJson = parseSmokeJson(smoke.out);
+  if (!smokeJson || smokeJson.completed !== true) {
+    fail(
+      'provider 连不通（额度可能没恢复）：`npm run test:real-model` 没拿到完整回复。\n' +
+        `  退出码 ${smoke.code}；stdout：${(smoke.out || '').slice(0, 200)}\n` +
+        '  这一轮不开跑。11-02 的 0802Z / 1000Z 都白等在这里：闸门全过、轮次跑完，\n' +
+        '  最后才发现额度根本不通。',
+    );
+  }
+  record(
+    'P12',
+    true,
+    `provider 连通（${smokeJson.elapsedMs}ms，exactMatch=${smokeJson.exactMatch}）`,
+  );
 
   if (DRY_RUN) {
     manifest.finished_at = new Date().toISOString();
@@ -619,11 +785,15 @@ async function main() {
 
   // 聊天历史不是扫描面，必须显式清。clear-history 会连带清掉工作区记忆与
   // data/sessions 下的 Skill 副本，所以后面三步是重跑，不是首跑。
-  const clear = await fetchRetry(`${MINICLAW}/api/groups/${encodeURIComponent(WS_JID)}/clear-history`, {
-    method: 'POST',
-    headers: { Cookie: cookie },
-  });
-  if (!clear.ok) fail(`clear-history 返回 ${clear.status}：${await clear.text()}`);
+  const clear = await fetchRetry(
+    `${MINICLAW}/api/groups/${encodeURIComponent(WS_JID)}/clear-history`,
+    {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    },
+  );
+  if (!clear.ok)
+    fail(`clear-history 返回 ${clear.status}：${await clear.text()}`);
   log('  聊天历史已清（连带工作区记忆与 session 目录）');
 
   mustSh(`${NODE} incident/runs/memory-de-leak.mjs`);
@@ -631,7 +801,8 @@ async function main() {
   mustSh(`${NODE} incident/runs/sync-agent-profile.mjs`);
 
   const scan = sh(`${NODE} incident/runs/leak-scan.mjs`);
-  if (scan.code !== 0) fail(`泄漏扫描没过（exit ${scan.code}）：\n${scan.out}\n${scan.err}`);
+  if (scan.code !== 0)
+    fail(`泄漏扫描没过（exit ${scan.code}）：\n${scan.out}\n${scan.err}`);
   log('  泄漏扫描：0 命中');
 
   // ───────────────────────────────────────────────────────────
@@ -642,7 +813,9 @@ async function main() {
   if (manifest.settle.skipped) {
     log('  本轮不需要坐稳（触发源就是那一次容器重建）');
   } else {
-    log(`  已坐稳（等 ${Math.round((manifest.settle.waited_ms ?? 0) / 1000)} 秒）`);
+    log(
+      `  已坐稳（等 ${Math.round((manifest.settle.waited_ms ?? 0) / 1000)} 秒）`,
+    );
   }
 
   // ───────────────────────────────────────────────────────────
@@ -651,9 +824,15 @@ async function main() {
   section('注入故障');
 
   const injectedAt = new Date().toISOString();
-  manifest.injection = { fault: FAULT, at: injectedAt, ...(await spec.inject()) };
+  manifest.injection = {
+    fault: FAULT,
+    at: injectedAt,
+    ...(await spec.inject()),
+  };
   injected = true;
-  log(`  已注入：${manifest.injection.changed.join('、')}（${manifest.injection.changed.length} 个维度）`);
+  log(
+    `  已注入：${manifest.injection.changed.join('、')}（${manifest.injection.changed.length} 个维度）`,
+  );
 
   // ───────────────────────────────────────────────────────────
   // 5. 等告警 firing
@@ -665,7 +844,8 @@ async function main() {
   while (Date.now() < deadline) {
     const a = await json(`${PROM}/api/v1/alerts`);
     const hit = a.data.alerts.find(
-      (x) => x.labels?.alertname === 'HighServerErrorRate' && x.state === 'firing',
+      (x) =>
+        x.labels?.alertname === 'HighServerErrorRate' && x.state === 'firing',
     );
     if (hit) {
       fired = hit;
@@ -674,7 +854,9 @@ async function main() {
     await sleep(5000);
   }
   if (!fired) {
-    fail('300 秒内 HighServerErrorRate 没有 firing。故障可能没注入成功，别在没故障的台子上跑 Agent。');
+    fail(
+      '300 秒内 HighServerErrorRate 没有 firing。故障可能没注入成功，别在没故障的台子上跑 Agent。',
+    );
   }
   manifest.alert = {
     alertname: fired.labels.alertname,
@@ -704,13 +886,27 @@ async function main() {
   const agentStart = new Date().toISOString();
   const ws = spawnSync(
     NODE,
-    ['incident/runs/ws-run.mjs', WS_JID, 'incident/runs/diag-prompt.txt', String(CAP_MS)],
-    { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: CAP_MS + 180000 },
+    [
+      'incident/runs/ws-run.mjs',
+      WS_JID,
+      'incident/runs/diag-prompt.txt',
+      String(CAP_MS),
+    ],
+    {
+      cwd: ROOT,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: CAP_MS + 180000,
+    },
   );
   if (!ws.stdout || !ws.stdout.trim()) {
     // spawnSync 的字段是 stderr，不是 err。之前写成 ws.err，报错只剩一个
     // 「undefined」，把真正的失败原因（例如 provider 429）吞掉了。
-    const why = [ws.stderr, ws.error?.message, ws.signal ? `signal=${ws.signal}` : '']
+    const why = [
+      ws.stderr,
+      ws.error?.message,
+      ws.signal ? `signal=${ws.signal}` : '',
+    ]
       .filter(Boolean)
       .join('\n');
     // ws 的 stderr 只有「run_finished reason=…」这类表面现象。
@@ -722,17 +918,19 @@ async function main() {
       const last = dug.apiErrors[dug.apiErrors.length - 1];
       const rateLimit = /429|rate.?limit|用量上限|quota/i.test(last.error);
       fail(
-        `Agent 没有产出任何文本（exit ${ws.status}）。\n`
-        + `ws-run stderr：\n${why || '（无）'}\n`
-        + `transcript（${dug.transcript}）里有 ${dug.apiErrors.length} 条 API 错误，最后一条：\n`
-        + `  ${last.error}\n`
-        + (rateLimit
-          ? `这是 provider 额度/限流问题，不是 Agent 也不是台子的问题——额度恢复前别再烧静默期。`
-          : `transcript 里的错误不是额度类，逐条看过再决定这一轮算谁的。`),
+        `Agent 没有产出任何文本（exit ${ws.status}）。\n` +
+          `ws-run stderr：\n${why || '（无）'}\n` +
+          `transcript（${dug.transcript}）里有 ${dug.apiErrors.length} 条 API 错误，最后一条：\n` +
+          `  ${last.error}\n` +
+          (rateLimit
+            ? `这是 provider 额度/限流问题，不是 Agent 也不是台子的问题——额度恢复前别再烧静默期。`
+            : `transcript 里的错误不是额度类，逐条看过再决定这一轮算谁的。`),
       );
     }
     manifest.agent_api_errors = dug;
-    fail(`Agent 没有产出任何文本（exit ${ws.status}）：\n${why || '（ws-run 没有输出，也没有 stderr）'}\n${dug.why ?? ''}`);
+    fail(
+      `Agent 没有产出任何文本（exit ${ws.status}）：\n${why || '（ws-run 没有输出，也没有 stderr）'}\n${dug.why ?? ''}`,
+    );
   }
   writeFileSync(REPORT_PATH, ws.stdout);
   manifest.agent = {
@@ -755,7 +953,8 @@ async function main() {
         if (!f.endsWith('.jsonl')) continue;
         const p = join(cand, f);
         if (statSync(p).mtimeMs < new Date(agentStart).getTime()) continue;
-        if (!transcript || statSync(p).mtimeMs > statSync(transcript).mtimeMs) transcript = p;
+        if (!transcript || statSync(p).mtimeMs > statSync(transcript).mtimeMs)
+          transcript = p;
       }
     }
   }
@@ -781,14 +980,21 @@ async function main() {
     invalidate('通道审计没跑（没有 transcript）');
     log('  审计没跑：没找到 transcript');
   } else {
-    const audit = sh(`${NODE} incident/runs/channel-audit.mjs ${transcript} --json`);
+    const audit = sh(
+      `${NODE} incident/runs/channel-audit.mjs ${transcript} --json`,
+    );
     try {
       manifest.channel_audit = JSON.parse(audit.out);
     } catch {
-      manifest.channel_audit = { verdict: 'not_run', why: audit.err || audit.out || '审计脚本没产出可解析的结果' };
+      manifest.channel_audit = {
+        verdict: 'not_run',
+        why: audit.err || audit.out || '审计脚本没产出可解析的结果',
+      };
     }
     const ca = manifest.channel_audit;
-    log(`  判定：${ca.verdict}（污染 ${ca.contaminating ?? '?'} 处｜越界 ${ca.out_of_surface ?? '?'} 处）`);
+    log(
+      `  判定：${ca.verdict}（污染 ${ca.contaminating ?? '?'} 处｜越界 ${ca.out_of_surface ?? '?'} 处）`,
+    );
     if (ca.verdict === 'contaminated') {
       invalidate('通道污染：Agent 读到了答案键或绕过了只读通道');
       for (const f of ca.findings ?? []) {
@@ -838,12 +1044,23 @@ async function main() {
     log('  --no-restore：故障态留在台子上');
   } else {
     try {
-      manifest.restore = { ok: true, at: new Date().toISOString(), ...(await spec.restore()) };
-      log('  已恢复公共静默态（缺陷在线、order 2 不在压测路径、超时旋钮 2000）');
+      manifest.restore = {
+        ok: true,
+        at: new Date().toISOString(),
+        ...(await spec.restore()),
+      };
+      log(
+        '  已恢复公共静默态（缺陷在线、order 2 不在压测路径、超时旋钮 2000）',
+      );
     } catch (err) {
       // 恢复失败不能改分数——分数已经在上面落盘了。
       // 但台子脏了，下一轮不能直接开跑，必须让 manifest 说清楚。
-      manifest.restore = { ok: false, at: new Date().toISOString(), error: err.message, stack: err.stack };
+      manifest.restore = {
+        ok: false,
+        at: new Date().toISOString(),
+        error: err.message,
+        stack: err.stack,
+      };
       invalidate(`恢复实验台失败：${err.message}`);
       log(`  ⚠ 恢复失败：${err.message}`);
     }
@@ -853,8 +1070,12 @@ async function main() {
   manifest.finished_at = new Date().toISOString();
   writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
 
-  log(`  Root Cause Accuracy：${score.root_cause_accuracy}（tier=${score.accuracy_tier}）`);
-  log(`  发布归因：${score.deployment_attribution}（真值要求 ${score.deployment_expected}）`);
+  log(
+    `  Root Cause Accuracy：${score.root_cause_accuracy}（tier=${score.accuracy_tier}）`,
+  );
+  log(
+    `  发布归因：${score.deployment_attribution}（真值要求 ${score.deployment_expected}）`,
+  );
   log(`  评分：${SCORE_PATH}`);
   log(`  manifest：${MANIFEST_PATH}`);
   if (!manifest.round_valid) log(`\n⚠ 本轮作废：${manifest.invalid_reason}\n`);
@@ -868,7 +1089,11 @@ main().catch(async (err) => {
   // 但如果没人看 manifest，服务会一直 500、告警一直 firing。
   if (injected && !restoreDone && !NO_RESTORE && activeSpec) {
     try {
-      manifest.restore = { ok: true, at: new Date().toISOString(), ...(await activeSpec.restore()) };
+      manifest.restore = {
+        ok: true,
+        at: new Date().toISOString(),
+        ...(await activeSpec.restore()),
+      };
       restoreDone = true;
       console.error('  已在中止路径恢复实验台');
     } catch (restoreErr) {
@@ -886,10 +1111,13 @@ main().catch(async (err) => {
   // 那会在 runner 已经放弃之后继续跑同一轮，产生不受控的额外 turn。
   if (cookie) {
     try {
-      const res = await fetchRetry(`${MINICLAW}/api/groups/${encodeURIComponent(WS_JID)}/stop`, {
-        method: 'POST',
-        headers: { Cookie: cookie },
-      });
+      const res = await fetchRetry(
+        `${MINICLAW}/api/groups/${encodeURIComponent(WS_JID)}/stop`,
+        {
+          method: 'POST',
+          headers: { Cookie: cookie },
+        },
+      );
       manifest.abort_stop = { status: res.status };
     } catch (stopErr) {
       manifest.abort_stop = { error: stopErr.message };
@@ -900,7 +1128,8 @@ main().catch(async (err) => {
   manifest.aborted = err.message;
   manifest.aborted_stack = err.stack;
   manifest.round_valid = false;
-  manifest.invalid_reason = manifest.invalid_reason ?? `本轮中止：${err.message}`;
+  manifest.invalid_reason =
+    manifest.invalid_reason ?? `本轮中止：${err.message}`;
   try {
     writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
     console.error(`  manifest：${MANIFEST_PATH}`);

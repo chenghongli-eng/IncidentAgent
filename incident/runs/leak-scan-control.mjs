@@ -57,9 +57,13 @@ function runScan(env) {
  * 造一份可控的数据库副本：
  *   dirty=true  → 聊天历史里留一条消息（模拟「上一轮还在」）
  *   dirty=false → 把本工作区所有 chat 的消息删干净
+ *   softDeleted=true → 留一条**软删**的工作区记忆（status='deleted'，正文还在）
  */
-function fixtureDb(dir, dirty) {
-  const dbPath = join(dir, `messages-${dirty ? 'dirty' : 'clean'}.db`);
+function fixtureDb(dir, dirty, softDeleted = false) {
+  const dbPath = join(
+    dir,
+    `messages-${dirty ? 'dirty' : 'clean'}${softDeleted ? '-softdel' : ''}.db`,
+  );
   copyFileSync(join(ROOT, 'data/db/messages.db'), dbPath);
   const db = new Database(dbPath);
   const folder = db
@@ -92,6 +96,30 @@ function fixtureDb(dir, dirty) {
       'target-service 出现线上故障，Prometheus 的 HighServerErrorRate 告警已经 firing。',
       '2026-11-02T00:00:00.000Z',
       0,
+    );
+  }
+  if (softDeleted) {
+    // 底座的 forget 只把 status 置成 'deleted'，正文原样留在表里——
+    // 这一行模拟的就是那种「调用方以为删掉了、其实正文还在」的状态。
+    db.prepare(
+      `INSERT INTO workspace_memory_items
+         (id, store_id, workspace_jid, kind, title, content, canonical_key,
+          status, importance, confidence, revision, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, 'deleted', 0.5, 1.0, 1, ?, ?, ?)`,
+    ).run(
+      'ctl-softdel-1',
+      db
+        .prepare(
+          'SELECT id FROM workspace_memory_stores WHERE workspace_jid = ?',
+        )
+        .get(WORKSPACE_JID)?.id ?? 'ctl-softdel-store',
+      WORKSPACE_JID,
+      'lesson',
+      '软删条目',
+      'Fault F2 的触发源是删掉判空兜底。',
+      '2026-11-02T00:00:00.000Z',
+      '2026-11-02T00:00:00.000Z',
+      '2026-11-02T00:00:00.000Z',
     );
   }
   db.close();
@@ -176,6 +204,24 @@ try {
       'D 数据库扫不到 → exit 1，报「不能报告 0 命中」',
       code === 1 && out.includes('不能报告 0 命中'),
       `exit=${code}`,
+    );
+  }
+
+  // E 软删记忆：缺口 ① 的对照。
+  // 这一行 status='deleted'，正文还在表里——旧扫描器只查 status='active'，
+  // 所以它**扫不到**；补了直查表之后必须命中。
+  // 如果这条又变回「exit 0」，说明缺口 ① 又回来了，而且没人发现。
+  {
+    const softDelDb = fixtureDb(dir, false, true);
+    const { code, out } = runScan({
+      LEAK_SCAN_DB: softDelDb,
+      LEAK_SCAN_SESSIONS: cleanSessions,
+    });
+    const hitMemory = out.includes('[工作区记忆]');
+    check(
+      'E 软删记忆条目 → exit 1，且工作区记忆面命中',
+      code === 1 && hitMemory,
+      `exit=${code} 工作区记忆=${hitMemory}`,
     );
   }
 } finally {
