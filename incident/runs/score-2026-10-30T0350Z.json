@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0350Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v5",
+  "rubric_version": "v6",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -33,9 +33,9 @@
   "deployment_checks": [
     {
       "id": "F4-D1",
-      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "name": "报告把发布排除为触发源（或降级为必要条件），并且指认了配置层的触发源",
       "result": "PASS",
-      "evidence": "…ile == null` 时必然 NPE。这解释了**失效链的第二段**，但**不是本次故障的触发因**（该提交4 天前就已上线，且上一容器从 02:12:00 跑到 03:50:…"
+      "evidence": "…s inside the repository root ``` **窗口内无代码变更** —— 这本身就是排除\"本次发布引入缺陷\"的依据，不是\"没查到\"。 为完整起见，仍检查了服务代码最近…"
     },
     {
       "id": "F4-D2",
@@ -76,7 +76,7 @@
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v4",
+    "rubric_version": "v5",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

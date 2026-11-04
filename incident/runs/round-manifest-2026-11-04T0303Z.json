@@ -1,0 +1,46 @@
+{
+  "stamp": "2026-11-04T0303Z",
+  "fault": "F4",
+  "started_at": "2026-11-04T03:03:42.262Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（763607 → 764060 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    }
+  ],
+  "setup": null,
+  "settle": null,
+  "injection": null,
+  "alert": null,
+  "agent": null,
+  "channel_audit": null,
+  "restore": null,
+  "score": null,
+  "round_valid": false,
+  "invalid_reason": "本轮中止：服务仓库 HEAD 34b43c8 2026-11-04T10:56:33+08:00 fix(tool): refuse metrics ranges that end in the future 只有 7.2 分钟前提交，落在 15 分钟窗口内。\n这一轮测的就不是「Agent 会不会误归因到发布」，而是「Agent 会不会做时间对齐」。\n等 8 分钟让这次提交滑出窗口再开跑（或者先跑别的故障类型）。",
+  "manifest_path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/round-manifest-2026-11-04T0303Z.json",
+  "finished_at": "2026-11-04T03:03:45.726Z",
+  "aborted": "服务仓库 HEAD 34b43c8 2026-11-04T10:56:33+08:00 fix(tool): refuse metrics ranges that end in the future 只有 7.2 分钟前提交，落在 15 分钟窗口内。\n这一轮测的就不是「Agent 会不会误归因到发布」，而是「Agent 会不会做时间对齐」。\n等 8 分钟让这次提交滑出窗口再开跑（或者先跑别的故障类型）。",
+  "aborted_stack": "Error: 服务仓库 HEAD 34b43c8 2026-11-04T10:56:33+08:00 fix(tool): refuse metrics ranges that end in the future 只有 7.2 分钟前提交，落在 15 分钟窗口内。\n这一轮测的就不是「Agent 会不会误归因到发布」，而是「Agent 会不会做时间对齐」。\n等 8 分钟让这次提交滑出窗口再开跑（或者先跑别的故障类型）。\n    at fail (file:///mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/run-round.mjs:251:9)\n    at Object.checkWindow (file:///mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/run-round.mjs:395:9)\n    at main (file:///mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/run-round.mjs:568:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+}

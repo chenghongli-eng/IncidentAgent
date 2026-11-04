@@ -220,20 +220,20 @@ for (const r of rows) {
 }
 
 /**
- * 新旧分数并列：v1 口径重放 vs v2 实测 vs v3 实测 vs v4 实测 vs v5 实测。
+ * 新旧分数并列：v1 口径重放 vs v2 实测 vs v3 实测 vs v4 实测 vs v5 实测 vs v6 实测。
  *
  * v1 的重建可信度由 `score-report-v1-replay.mjs` 自检保证——
  * 它必须复现两条**独立记录在案**的 v1 结果（0423Z=0.5、0431Z=0.0）。
  *
- * v2 / v3 / v4 那一列读的是归档件 `score-<stamp>.v2.json` 等，
+ * v2 / v3 / v4 / v5 那一列读的是归档件 `score-<stamp>.v2.json` 等，
  * 不是现算的：归档件是当时原样存下来的原件，现算的结果只能证明「重算一致」，
- * 不能替代原件。v5 是当前 rubric，读的就是当前的 `score-<stamp>.json`。
+ * 不能替代原件。v6 是当前 rubric，读的就是当前的 `score-<stamp>.json`。
  *
  * 2026-11-02T0702Z 与 2026-11-02T0827Z 两轮**通道污染、本身作废**，但分数
  * 照样进这张表：判据改了，所有轮次都得用同一个版本重打并并列披露；
  * 作废与否是通道审计的事，不是不打分的事。
  *
- * 2026-11-03T0324Z 是 provider 换成 deepseek 之后的第一轮，它只测过 v5，
+ * 2026-11-03T0324Z 是 provider 换成 deepseek 之后的第一轮，它只测过 v5 之后的版本，
  * v2/v3/v4 那一列是空的——那一轮之前的 rubric 已经改过好几版，
  * 补测旧 rubric 也换不回同一个模型，只能缺着，不能假装有。
  * 换个模型出分不等于换了标尺：这行只说明「同一份报告在 v1 口径下也是几分」。
@@ -249,16 +249,17 @@ const REPORTS = [
   ['2026-11-02T0702Z', 'F2'],
   ['2026-11-02T0827Z', 'F2'],
   ['2026-11-03T0324Z', 'F2'],
+  ['2026-11-04T0324Z', 'F4'],
 ];
 
 console.log(
-  '\n### 新旧判据分数并列（v1 重放 / v2 实测 / v3 实测 / v4 实测 / v5 实测）\n',
+  '\n### 新旧判据分数并列（v1 重放 / v2 实测 / v3 实测 / v4 实测 / v5 实测 / v6 实测）\n',
 );
 console.log(
-  '| 轮次 | 故障 | v1 准确率 | v1 发布归因 | v2 准确率 | v2 发布归因 | v3 准确率 | v3 发布归因 | v4 准确率 | v4 发布归因 | v5 准确率 | v5 发布归因 | 差异来源 |',
+  '| 轮次 | 故障 | v1 准确率 | v1 发布归因 | v2 准确率 | v2 发布归因 | v3 准确率 | v3 发布归因 | v4 准确率 | v4 发布归因 | v5 准确率 | v5 发布归因 | v6 准确率 | v6 发布归因 | 差异来源 |',
 );
 console.log(
-  '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+  '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
 );
 for (const [stamp, faultId] of REPORTS) {
   const reportPath = join(RUNS, `agent-report-${stamp}.md`);
@@ -269,21 +270,27 @@ for (const [stamp, faultId] of REPORTS) {
   const v2 = readScore(join(RUNS, `score-${stamp}.v2.json`));
   const v3 = readScore(join(RUNS, `score-${stamp}.v3.json`));
   const v4 = readScore(join(RUNS, `score-${stamp}.v4.json`));
-  const v5 = readScore(join(RUNS, `score-${stamp}.json`));
+  const v5 = readScore(join(RUNS, `score-${stamp}.v5.json`));
+  const v6 = readScore(join(RUNS, `score-${stamp}.json`));
   const diff = [];
-  if (v5 && v1.accuracy !== v5.root_cause_accuracy) diff.push('v1→v5 准确率');
-  if (v5 && v1.verdict !== v5.deployment_attribution)
-    diff.push('v1→v5 发布归因');
-  if (v4 && v5 && v4.root_cause_accuracy !== v5.root_cause_accuracy)
-    diff.push('v4→v5 准确率');
-  if (v4 && v5 && v4.deployment_attribution !== v5.deployment_attribution)
-    diff.push('v4→v5 发布归因');
+  if (v6 && v1.accuracy !== v6.root_cause_accuracy) diff.push('v1→v6 准确率');
+  if (v6 && v1.verdict !== v6.deployment_attribution)
+    diff.push('v1→v6 发布归因');
+  if (v4 && v6 && v4.root_cause_accuracy !== v6.root_cause_accuracy)
+    diff.push('v4→v6 准确率');
+  if (v4 && v6 && v4.deployment_attribution !== v6.deployment_attribution)
+    diff.push('v4→v6 发布归因');
+  if (v5 && v6 && v5.root_cause_accuracy !== v6.root_cause_accuracy)
+    diff.push('v5→v6 准确率');
+  if (v5 && v6 && v5.deployment_attribution !== v6.deployment_attribution)
+    diff.push('v5→v6 发布归因');
   console.log(
     `| ${stamp} | ${faultId} | ${v1.accuracy.toFixed(1)}（${v1.tier}） | ${v1.verdict} | ` +
       `${v2 ? v2.root_cause_accuracy.toFixed(1) : '—'} | ${v2 ? v2.deployment_attribution : '—'} | ` +
       `${v3 ? v3.root_cause_accuracy.toFixed(1) : '—'} | ${v3 ? v3.deployment_attribution : '—'} | ` +
       `${v4 ? v4.root_cause_accuracy.toFixed(1) : '—'} | ${v4 ? v4.deployment_attribution : '—'} | ` +
       `${v5 ? v5.root_cause_accuracy.toFixed(1) : '—'} | ${v5 ? v5.deployment_attribution : '—'} | ` +
+      `${v6 ? v6.root_cause_accuracy.toFixed(1) : '—'} | ${v6 ? v6.deployment_attribution : '—'} | ` +
       `${diff.length ? diff.join(' + ') : '无'} |`,
   );
 }

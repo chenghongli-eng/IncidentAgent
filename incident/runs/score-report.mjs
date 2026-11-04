@@ -100,8 +100,46 @@ import { pathToFileURL } from 'node:url';
  *   那是 Agent 错，不是判据错。
  *
  *   改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变）。
+ *
+ * v5 → v6 改的三处，还是同一个毛病：**判据量的是措辞，不是诊断能力**。
+ *   被判的是 2026-11-04T0324Z 那轮（F4 × deepseek-v4-flash[1m]）。
+ *   复核结论（`audit-2026-11-04T0324Z.md`）：那轮的**诊断内容实质正确**——
+ *   机制链闭合、两组自然对照实验成立、发布被正确降级为必要条件——
+ *   但 v5 判成 0.0（miss）、发布归因 unclear。两个 FAIL **都不是 Agent 的锅**。
+ *
+ *   1. F4-C1 的「配置侧」词表是一份**名词枚举**
+ *      （运行时旋钮 / 运行时配置 / 配置层 / 超时旋钮 / timeout / DOWNSTREAM_TIMEOUT_MS），
+ *      而那份报告写的是「运行时把下游读超时压到 1 ms」——**动词化的动作描述**，
+ *      名词枚举里一个都不沾，于是 C1 判 FAIL。
+ *      改法：给配置侧加一条**带数值的动作句**
+ *      （运行时/运行期/运行中 … 超时 … 压到|调小|改成… + 一个 ms 级数值）。
+ *      **不给**「生效值 / 运行时参数 / 环境变量 / 超时预算」开口子——
+ *      它们是 `near_miss_wording` 故意留的近义词，只能进人工复核，不能自动算命中。
+ *
+ *   2. F4-D1（把发布排除为触发源）的四条备选**全都**要求「触发源」这类层级词，
+ *      或要求写在表格的 `|` 管道里；而排除类判断本来就不该要求层级词
+ *      （层级词是用来**命名**原因的，不是用来**否定**原因的）。
+ *      那份报告写的是「发布变更无关：排除」——人话、语义正确、四条全不命中。
+ *      改法：给排除类单独一套措辞（发布/部署/commit + 无关/不相关/不是原因/排除，
+ *      正反两个语序都认），并允许「必要条件/前置缺陷」写在 commit **之后**。
+ *
+ *   3. 新增 `any_of` 原语（判据级）：`all_of` 之外再加一条「至少要命中其中之一」，
+ *      用来给 F4-D1 挂一个**并列约束**——只写「发布无关」不算数，
+ *      必须同时在报告里指认出**配置层触发源**。
+ *      没有这条，「只要写了排除两个字就算排除对了」会成为刷分路径。
+ *
+ *   顺带把 F4-D2（说发布是触发源）补成和 F2-D1 对称：
+ *   允许「发布/部署/上线 + 变更动词」这条链（v5 只给 F2 补过，F4 这一族漏了）。
+ *   **层级词表一个字没加**——加进去会把「必要条件：这次提交删了兜底」误判成过度归因。
+ *
+ *   **Q2 的层级词表仍然没改**：那轮通篇只写「必要条件」，
+ *   从未区分「触发源 / 必要条件 / 放大条件」——判据本意（分层归因）它没满足，
+ *   那是 Agent 错，不是判据错。**这一轮尤其不能借「词表要扩」顺手把 Q2 放宽。**
+ *
+ *   改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变），
+ *   并且 `rescore-all.mjs` 全量重打 + 归档 v5 快照。
  */
-const RUBRIC_VERSION = 'v5';
+const RUBRIC_VERSION = 'v6';
 
 /**
  * 报告契约的固定字段。
@@ -236,9 +274,21 @@ function extractSections(text) {
 const _legacySECTIONS = [
   { name: 'root_cause', re: /^#+\s*.*【根因假设】.*$/m, label: '【根因假设】' },
   { name: 'support', re: /^#+\s*.*【支持证据】.*$/m, label: '【支持证据】' },
-  { name: 'against', re: /^#+\s*.*【反对证据.*】.*$/m, label: '【反对证据 / 尚未解释】' },
-  { name: 'excluded', re: /^#+\s*.*【已排除的假设.*】.*$/m, label: '【已排除的假设及排除依据】' },
-  { name: 'skipped', re: /^#+\s*.*【跳过的步骤.*】.*$/m, label: '【跳过的步骤及原因】' },
+  {
+    name: 'against',
+    re: /^#+\s*.*【反对证据.*】.*$/m,
+    label: '【反对证据 / 尚未解释】',
+  },
+  {
+    name: 'excluded',
+    re: /^#+\s*.*【已排除的假设.*】.*$/m,
+    label: '【已排除的假设及排除依据】',
+  },
+  {
+    name: 'skipped',
+    re: /^#+\s*.*【跳过的步骤.*】.*$/m,
+    label: '【跳过的步骤及原因】',
+  },
   { name: 'anchors', re: /^#+\s*.*锚点.*$/m, label: '三个锚点' },
   { name: 'whole', re: /^$/m, label: '整篇报告' },
 ];
@@ -287,7 +337,10 @@ function findSnippet(text, pattern) {
   if (!m) return null;
   const idx = m.index ?? 0;
   const from = Math.max(0, idx - 40);
-  const raw = text.slice(from, idx + m[0].length + 40).replace(/\s+/g, ' ').trim();
+  const raw = text
+    .slice(from, idx + m[0].length + 40)
+    .replace(/\s+/g, ' ')
+    .trim();
   return `…${raw}…`;
 }
 
@@ -306,18 +359,32 @@ function countItems(text) {
   let tableHeaderSeen = false;
   for (const line of lines) {
     const t = line.trim();
-    if (/^[-*+•]\s+/.test(t)) { bullets += 1; continue; }
-    if (/^\d+[.)]\s+/.test(t)) { numbered += 1; continue; }
-    if (!t.startsWith('|')) { tableHeaderSeen = false; continue; }
+    if (/^[-*+•]\s+/.test(t)) {
+      bullets += 1;
+      continue;
+    }
+    if (/^\d+[.)]\s+/.test(t)) {
+      numbered += 1;
+      continue;
+    }
+    if (!t.startsWith('|')) {
+      tableHeaderSeen = false;
+      continue;
+    }
     if (/^\|[\s:|-]*\|$/.test(t.replace(/\s/g, ''))) continue; // 分隔行
-    if (!tableHeaderSeen) { tableHeaderSeen = true; continue; }  // 表头
+    if (!tableHeaderSeen) {
+      tableHeaderSeen = true;
+      continue;
+    } // 表头
     rows += 1;
   }
   const kinds = [
     bullets ? `bullet ${bullets}` : null,
     numbered ? `编号 ${numbered}` : null,
     rows ? `表格行 ${rows}` : null,
-  ].filter(Boolean).join(' / ');
+  ]
+    .filter(Boolean)
+    .join(' / ');
   return { count: bullets + numbered + rows, bullets, numbered, rows, kinds };
 }
 
@@ -325,7 +392,13 @@ function runCheck(check, sections) {
   const scope = check.section ?? 'whole';
   const text = sections[scope];
   if (text === null) {
-    return { id: check.id, name: check.name, scope, result: 'NO_SECTION', evidence: null };
+    return {
+      id: check.id,
+      name: check.name,
+      scope,
+      result: 'NO_SECTION',
+      evidence: null,
+    };
   }
   const missing = [];
   const evidence = [];
@@ -340,6 +413,21 @@ function runCheck(check, sections) {
   }
   let result = 'PASS';
   if (missing.length || absent.length) result = 'FAIL';
+  // any_of：这些模式里**至少要命中一个**。
+  //
+  // 用来挂「并列约束」——某条主张要成立，光说它自己不够，还得同时说点别的。
+  // v6 给 F4-D1（把发布排除为触发源）挂了一条：只写「发布无关」不算数，
+  // 报告里必须同时指认出配置层的触发源，否则「排除」可能排除错了对象。
+  const anyOf = check.any_of ?? [];
+  if (anyOf.length) {
+    const anyHits = anyOf.filter((p) => findSnippet(text, p));
+    if (!anyHits.length) {
+      result = 'FAIL';
+      missing.push(`any_of 无一命中：${anyOf.join(' | ')}`);
+    } else {
+      evidence.push(`（any_of 命中：${anyHits[0]}）`);
+    }
+  }
   // min_count：同一模式至少要出现 N 次（例如"排除了 N 条假设"）
   if (check.min_count) {
     const { pattern, n } = check.min_count;
@@ -401,7 +489,12 @@ function scoreAccuracy(accuracy, sections) {
     }
   }
   const last = attempts[attempts.length - 1];
-  return { score: 0.0, tier: 'miss', attempts, results: hitResults ?? last?.results ?? [] };
+  return {
+    score: 0.0,
+    tier: 'miss',
+    attempts,
+    results: hitResults ?? last?.results ?? [],
+  };
 }
 
 /**
@@ -419,8 +512,12 @@ function scoreAccuracy(accuracy, sections) {
  * 这正是本项目要测的失败模式，必须能被指标表统计到。
  */
 function scoreDeployment(expected, spec, sections) {
-  const notTrigger = spec?.says_not_trigger ? runCheck(spec.says_not_trigger, sections) : null;
-  const isTrigger = spec?.says_is_trigger ? runCheck(spec.says_is_trigger, sections) : null;
+  const notTrigger = spec?.says_not_trigger
+    ? runCheck(spec.says_not_trigger, sections)
+    : null;
+  const isTrigger = spec?.says_is_trigger
+    ? runCheck(spec.says_is_trigger, sections)
+    : null;
   const checks = [notTrigger, isTrigger].filter(Boolean);
 
   let verdict;
@@ -436,7 +533,8 @@ function scoreDeployment(expected, spec, sections) {
 
   let correct;
   if (verdict === 'unclear') correct = 'unclear';
-  else if (expected === 'excluded') correct = verdict === 'excluded' ? 'correct' : 'wrong';
+  else if (expected === 'excluded')
+    correct = verdict === 'excluded' ? 'correct' : 'wrong';
   else correct = verdict === 'relevant' ? 'correct' : 'wrong';
 
   return { expected, verdict, correct, checks };
@@ -479,7 +577,11 @@ export function scoreReport(report, truth, meta = {}) {
     if (r.result !== 'FAIL') continue;
     const scope = sections[r.scope] ?? sections.whole;
     const near = nearMiss.filter((p) => findSnippet(scope, p));
-    if (near.length) needsReview.push({ id: r.id, reason: `近似表述命中：${near.join(' / ')}` });
+    if (near.length)
+      needsReview.push({
+        id: r.id,
+        reason: `近似表述命中：${near.join(' / ')}`,
+      });
   }
 
   return {
@@ -527,7 +629,9 @@ const isMain =
 if (isMain) {
   const [reportPath, truthPath, ...rest] = process.argv.slice(2);
   if (!reportPath || !truthPath) {
-    console.error('usage: score-report.mjs <report.md> <ground-truth.json> [--json]');
+    console.error(
+      'usage: score-report.mjs <report.md> <ground-truth.json> [--json]',
+    );
     process.exit(2);
   }
   const asJson = rest.includes('--json');
@@ -538,17 +642,25 @@ if (isMain) {
   if (asJson) {
     console.log(JSON.stringify(out, null, 2));
   } else {
-    console.log(`\n=== 报告评分：${truth.fault_id}（${truth.fault_class}） ===`);
+    console.log(
+      `\n=== 报告评分：${truth.fault_id}（${truth.fault_class}） ===`,
+    );
     console.log(`报告：${reportPath}`);
     console.log(`真值：${truth.title}`);
-    console.log(`\nRoot Cause Accuracy：${out.root_cause_accuracy.toFixed(1)}（tier=${out.accuracy_tier}）`);
-    console.log(`发布归因：${out.deployment_attribution}（真值要求 ${out.deployment_expected}）`);
+    console.log(
+      `\nRoot Cause Accuracy：${out.root_cause_accuracy.toFixed(1)}（tier=${out.accuracy_tier}）`,
+    );
+    console.log(
+      `发布归因：${out.deployment_attribution}（真值要求 ${out.deployment_expected}）`,
+    );
     console.log('\n--- 判据明细 ---');
     for (const r of out.criteria) {
       console.log(`[${r.result}] ${r.id} ${r.name}`);
       if (r.result === 'FAIL') {
-        if (r.missing_patterns?.length) console.log(`      未匹配：${r.missing_patterns.join(' | ')}`);
-        if (r.forbidden_hits?.length) console.log(`      命中禁用：${r.forbidden_hits.join(' | ')}`);
+        if (r.missing_patterns?.length)
+          console.log(`      未匹配：${r.missing_patterns.join(' | ')}`);
+        if (r.forbidden_hits?.length)
+          console.log(`      命中禁用：${r.forbidden_hits.join(' | ')}`);
       }
       if (r.evidence) console.log(`      证据：${r.evidence}`);
     }

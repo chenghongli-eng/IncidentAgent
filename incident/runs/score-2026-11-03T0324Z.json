@@ -1,7 +1,7 @@
 {
-  "report": "<repo>/incident/runs/agent-report-2026-11-03T0324Z.md",
-  "ground_truth": "<repo>/incident/runs/ground-truth/F2.json",
-  "rubric_version": "v5",
+  "report": "agent-report-2026-11-03T0324Z.md",
+  "ground_truth": "ground-truth/F2.json",
+  "rubric_version": "v6",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -74,5 +74,12 @@
       "evidence": "…【反对证据 / 尚未解释】 - 旋钮文件在 03:24:53 被编辑、03:25:01 有过一次容器…"
     }
   ],
-  "needs_review": []
+  "needs_review": [],
+  "rescored_from": {
+    "rubric_version": "v5",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "relevant",
+    "deployment_attribution_correct": "correct"
+  }
 }

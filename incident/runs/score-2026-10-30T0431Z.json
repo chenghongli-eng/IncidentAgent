@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0431Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v5",
+  "rubric_version": "v6",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -33,9 +33,9 @@
   "deployment_checks": [
     {
       "id": "F4-D1",
-      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "name": "报告把发布排除为触发源（或降级为必要条件），并且指认了配置层的触发源",
       "result": "PASS",
-      "evidence": "…例为 0。 结论：代码变更只是**前置缺陷**（删掉 null 兜底），不是触发因素。Δ(T_err − T_dep) = +0.56s 的高度相关性来自运…"
+      "evidence": "…且该提交在 02:14–03:50 基线期 5xx 比例为 0。 结论：代码变更只是**前置缺陷**（删掉 null 兜底），不是触发因素。Δ(T_err − T_dep) =…"
     },
     {
       "id": "F4-D2",
@@ -76,7 +76,7 @@
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v4",
+    "rubric_version": "v5",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

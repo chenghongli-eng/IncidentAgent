@@ -101,8 +101,8 @@
     "to": "2000"
   },
   "score": {
-    "path": "<repo>/incident/runs/score-2026-10-30T0431Z.json",
-    "rubric_version": "v5",
+    "path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/score-2026-10-30T0431Z.json",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

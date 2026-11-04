@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0738Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v5",
+  "rubric_version": "v6",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -76,7 +76,7 @@
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v4",
+    "rubric_version": "v5",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

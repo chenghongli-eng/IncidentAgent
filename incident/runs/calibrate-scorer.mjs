@@ -15,6 +15,10 @@
  *  10. 10-30 F2 报告 −全部结构（标题与标记都去掉）× F2 真值 → 0.0 / unclear / unclear（**v4 负对照**）
  *  11. 10-30 F2 报告 −commit 措辞 +「部署」措辞 × F2 真值 → 1.0 / relevant / correct（**v5 正对照**）
  *  12. 10-30 F2 报告 −「发布→变更」这条链 × F2 真值 → 0.0 / unclear / unclear（**v5 负对照**）
+ *  13. 11-04 F4 报告 × F4 真值 → 1.0 / excluded / correct（**v6 正对照**：配置侧写成动作句，v5 判不到）
+ *  14. 11-04 F4 报告 −root_cause 里的配置侧动作句 × F4 真值 → 0.0 / excluded / correct（**v6 负对照 A**）
+ *  15. 11-04 F4 报告 −全文配置侧证据（保留「发布无关：排除」）× F4 真值 → 0.0 / unclear / unclear（**v6 负对照 B**）
+ *  16. 内联报告：把发布说成触发源 × F4 真值 → 0.0 / relevant / wrong（**v6 负对照 C：过度归因要抓得到**）
  *
  * 第 3、4 行是关键：打分器不能因为「报告里提到了 commit 和 null」就放行，
  * 必须看它把发布放在触发源还是必要条件的位置上。
@@ -48,6 +52,22 @@
  *     把什么变成了故障——C1 与 D1 必须仍然 FAIL。
  *     没有这条，「报告里出现过发布两个字」就会变成命中条件。
  *
+ * 第 13–16 行是 v6 的四条：
+ *   · 第 13 行是 v6 的正对照：11-04 那轮把配置侧写成**动作句**
+ *     （「运行时把下游读超时压到 1 ms」），不是名词枚举里的任何一项，
+ *     v5 判 C1 FAIL、整轮 0.0、发布归因 unclear——而那份报告的诊断内容是对的
+ *     （复核见 `audit-2026-11-04T0324Z.md`）。v6 必须判 1.0 / excluded / correct。
+ *   · 第 14 行是 v6 的负对照 A：把 root_cause 里那句配置侧结论拿掉
+ *     （其余一字不改，机制链、null 折叠、兜底全在）——C1 必须 FAIL。
+ *     它证明 C1 量的是**结论里有没有落到配置层**，不是「报告里有没有出现过
+ *     DOWNSTREAM_TIMEOUT_MS 这个名字」（这个名字在支持证据节里仍有）。
+ *   · 第 15 行是 v6 的负对照 B：把**全文**的配置侧证据都拿掉，
+ *     只留下「发布变更无关：排除」这一句排除声明——D1 必须 FAIL、发布归因必须
+ *     判 unclear。没有这条，「只要写了排除两个字就算排除对了」会成为刷分路径：
+ *     报告可以对发布说了一万句「无关」，却根本没找到真正的触发源。
+ *   · 第 16 行是 v6 的负对照 C：一份把发布说成触发源的报告，发布归因必须判
+ *     relevant / wrong（过度归因要抓得到）。这一行同时是 v6 给 F4-D2 补
+ *     「发布/部署 + 变更动词」这条链的证明——没有它，F4 这一族对过度归因是瞎的。
  * 用法：node incident/runs/calibrate-scorer.mjs
  */
 import { readFileSync } from 'node:fs';
@@ -57,9 +77,8 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
-const { scoreReport, extractSections, scoreAccuracy, scoreDeployment } = await import(
-  new URL('./score-report.mjs', import.meta.url).href
-);
+const { scoreReport, extractSections, scoreAccuracy, scoreDeployment } =
+  await import(new URL('./score-report.mjs', import.meta.url).href);
 
 const SYMPTOM_ONLY = `# target-service 5xx 故障诊断报告
 
@@ -89,6 +108,40 @@ target-service 出现大量 HTTP 500，NullPointerException 频繁出现，订�
 `;
 
 /**
+ * v6 负对照 C 用的内联报告：把**发布**说成触发源。
+ *
+ * F4 的真值是「发布是必要条件，触发源是运行时旋钮」。
+ * 这份报告反过来：把发布说成触发源（机制段里「部署 … 删除了 …」、
+ * 层级词写「触发源」），而且全文没有一句把发布排除掉。
+ * 发布归因必须判 relevant / wrong——**过度归因要抓得到**。
+ */
+const DEPLOYMENT_AS_TRIGGER = `# target-service 5xx 故障诊断报告
+
+## 三个锚点
+| 锚点 | 时间 |
+|---|---|
+| ① 告警起始 | 2026-11-04T03:42:04Z |
+| ② 异常首次出现 | 2026-11-04T03:41:43Z |
+| ③ 最近一次部署 | 2026-11-04T03:41:38Z |
+
+## 【根因假设】
+机制：本次部署 852d339 删除了 OrderService 中的判空兜底，触发源就是这次发布带来的缺陷。
+
+## 【支持证据】
+- \`runtime env\`：DOWNSTREAM_TIMEOUT_MS=1
+- 容器重建后 5xx 比例抬升
+
+## 【反对证据 / 尚未解释】
+- 无
+
+## 【已排除的假设及排除依据】
+- 资源类：排除。
+
+## 【跳过的步骤及原因】
+无。
+`;
+
+/**
  * 负对照手术：把「null 守卫」这个概念从报告里整段拿掉。
  *
  * 只动守卫概念的**说法**，不动别的：
@@ -106,10 +159,10 @@ function stripGuardConcept(report) {
     .replace(/解引用\s*null/g, '直接取值')
     .replace(
       /```diff\n[\s\S]*?```/,
-      '```diff\n'
-      + '-        order.put("ship_to", "UNKNOWN");\n'
-      + '+        order.put("ship_to", profile.get("address"));\n'
-      + '```',
+      '```diff\n' +
+        '-        order.put("ship_to", "UNKNOWN");\n' +
+        '+        order.put("ship_to", profile.get("address"));\n' +
+        '```',
     );
 }
 
@@ -200,6 +253,59 @@ function releaseAsAnchorOnly(report) {
 }
 
 /**
+ * 手术 F（v6 负对照 A）：把 root_cause 里那句配置侧结论拿掉。
+ *
+ * 只动**这一句**——「运行时把下游读超时压到 1 ms（knob 文件 …）」换成
+ * 「下游读超时（Read timed out）」。机制链、null 折叠、兜底缺失、NPE、
+ * 两组对照实验一个字没改。
+ *
+ * 手术之后报告里**仍然**有 `DOWNSTREAM_TIMEOUT_MS`（在支持证据节里），
+ * 所以如果 C1 还能 PASS，说明 C1 量的是「报告里出现过那个环境变量名」，
+ * 而不是「结论落到了配置层」——那正是这一条要防的。
+ */
+function stripConfigSideFromRootCause(report) {
+  return replaceOnce(
+    report,
+    '机制：运行时把下游读超时压到 1 ms（knob 文件 03:41:37.614 改、03:41:38.052 容器重建生效），',
+    '机制：下游读超时（Read timed out），',
+  );
+}
+
+/**
+ * 手术 G（v6 负对照 B）：把**全文**的配置侧证据都拿掉。
+ *
+ * 保留「发布变更无关：排除」这一句排除声明，其余配置侧痕迹全部换成
+ * 不带任何配置层词的说法（配置项 / 运行侧设置 / 某超时配置项 / 文件）。
+ *
+ * 这条是 v6 给 F4-D1 挂 `any_of` 并列约束的证明：
+ * 只写「发布无关」而根本没说触发源是什么，D1 必须 FAIL、发布归因必须 unclear。
+ */
+function stripAllConfigEvidence(report) {
+  const out = replaceAllChecked(report, [
+    ['DOWNSTREAM_TIMEOUT_MS', '某超时配置项'],
+    ['knob 文件', '配置文件'],
+    ['knob', '配置文件'],
+    ['运行时配置层', '运行侧设置'],
+    ['旋钮', '配置项'],
+    ['运行时配置项', '运行侧参数'],
+    [
+      '机制：运行时把下游读超时压到 1 ms（配置文件 03:41:37.614 改、03:41:38.052 容器重建生效），',
+      '机制：下游读超时（配置文件 03:41:37.614 变更、03:41:38.052 容器重建生效），',
+    ],
+  ]);
+  // 手术后必须真的没有配置侧痕迹了：any_of 一旦还能命中，这条校准就是假证据。
+  const leftovers = out.match(
+    /DOWNSTREAM_TIMEOUT_MS|旋钮|knob|运行时配置|运行期配置|配置层/g,
+  );
+  if (leftovers) {
+    throw new Error(
+      `手术没清干净，仍残留：${[...new Set(leftovers)].join(' / ')}`,
+    );
+  }
+  return out;
+}
+
+/**
  * 替换必须真的发生。找不到原文就抛错——手术悄悄没生效的话，
  * 校准会以「本来就能过的报告」冒充「手术后的报告」通过，那是假证据。
  */
@@ -208,6 +314,18 @@ function replaceOnce(report, from, to) {
     throw new Error(`手术没找到待替换的原文：${from.slice(0, 48)}…`);
   }
   return report.replace(from, to);
+}
+
+/** 同上，批量替换：每一处都必须真的替换到（`split/join` 全文替换）。 */
+function replaceAllChecked(report, pairs) {
+  let out = report;
+  for (const [from, to] of pairs) {
+    if (!out.includes(from)) {
+      throw new Error(`手术没找到待替换的原文：${from.slice(0, 48)}…`);
+    }
+    out = out.split(from).join(to);
+  }
+  return out;
 }
 
 /** 同上，替换一整块（按正则定位）。 */
@@ -298,7 +416,10 @@ const CASES = [
     expect_criteria: { 'F2-C1': 'PASS', 'F2-C2': 'PASS' },
     expect_deployment_checks: { 'F2-D1': 'PASS', 'F2-D2': 'FAIL' },
     // 手术必须真的把 commit 侧的词清干净，否则这条就是在考「本来就能过的报告」。
-    expect_absent: { section: 'root_cause', pattern: 'commit|提交|代码变更|重新引入|revert' },
+    expect_absent: {
+      section: 'root_cause',
+      pattern: 'commit|提交|代码变更|重新引入|revert',
+    },
     expect_present: { section: 'root_cause', pattern: '部署' },
   },
   {
@@ -312,7 +433,63 @@ const CASES = [
     // 「发布」两个字必须还在 root_cause 里：只有它还在，C1/D1 仍然 FAIL
     // 才说明判据认的是「发布 + 变更动词」，不是「发布」两个字本身。
     expect_present: { section: 'root_cause', pattern: '发布|部署|上线' },
-    expect_absent: { section: 'root_cause', pattern: 'commit|提交|代码变更|重新引入|revert' },
+    expect_absent: {
+      section: 'root_cause',
+      pattern: 'commit|提交|代码变更|重新引入|revert',
+    },
+  },
+  {
+    name: '11-04 F4 报告 × F4 真值（v6 正对照：配置侧写成动作句，v5 判不到）',
+    report: join(root, 'runs/agent-report-2026-11-04T0324Z.md'),
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 1.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'PASS', 'F4-C2': 'PASS' },
+    expect_deployment_checks: { 'F4-D1': 'PASS', 'F4-D2': 'FAIL' },
+    // 这一轮的配置侧结论写在 root_cause 里，措辞是动作句：
+    // 「运行时把下游读超时压到 1 ms」——v5 的名词枚举一个都不沾，于是判 FAIL。
+    expect_present: {
+      section: 'root_cause',
+      pattern: '运行时把下游读超时压到 1 ms',
+    },
+  },
+  {
+    name: '11-04 F4 报告 −root_cause 里的配置侧结论（v6 负对照 A：结论没落到配置层）',
+    report: join(root, 'runs/agent-report-2026-11-04T0324Z.md'),
+    mutate: stripConfigSideFromRootCause,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'FAIL', 'F4-C2': 'PASS' },
+    // 关键：那个环境变量名在支持证据节里**仍然**有——
+    // C1 仍然 FAIL 才说明它量的是「结论」，不是「出现过那个名字」。
+    expect_present: { section: 'whole', pattern: 'DOWNSTREAM_TIMEOUT_MS' },
+    expect_absent: {
+      section: 'root_cause',
+      pattern: '旋钮|knob|DOWNSTREAM_TIMEOUT_MS|运行时配置|配置层',
+    },
+  },
+  {
+    name: '11-04 F4 报告 −全文配置侧证据（v6 负对照 B：只写「发布无关」不算数）',
+    report: join(root, 'runs/agent-report-2026-11-04T0324Z.md'),
+    mutate: stripAllConfigEvidence,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'unclear', correct: 'unclear' },
+    expect_criteria: { 'F4-C1': 'FAIL', 'F4-C2': 'PASS' },
+    expect_deployment_checks: { 'F4-D1': 'FAIL', 'F4-D2': 'FAIL' },
+    // 排除声明必须还在：D1 判 FAIL 才说明是「并列约束」把它拦下来的，
+    // 而不是「排除措辞没匹配上」。
+    expect_present: { section: 'whole', pattern: '发布变更无关：排除' },
+    expect_absent: {
+      section: 'whole',
+      pattern: 'DOWNSTREAM_TIMEOUT_MS|旋钮|knob|运行时配置|运行期配置|配置层',
+    },
+  },
+  {
+    name: '内联报告：把发布说成触发源（v6 负对照 C：过度归因要抓得到）',
+    report: null,
+    inline: DEPLOYMENT_AS_TRIGGER,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'relevant', correct: 'wrong' },
+    expect_deployment_checks: { 'F4-D1': 'FAIL', 'F4-D2': 'PASS' },
   },
 ];
 
@@ -332,18 +509,24 @@ for (const c of CASES) {
   const truth = JSON.parse(readFileSync(c.truth, 'utf8'));
   const sections = extractSections(reportText);
   const accuracy = scoreAccuracy(truth.accuracy, sections);
-  const deployment = scoreDeployment(truth.deployment_attribution?.expected, truth.deployment_attribution, sections);
+  const deployment = scoreDeployment(
+    truth.deployment_attribution?.expected,
+    truth.deployment_attribution,
+    sections,
+  );
 
   // 判据级断言：只看总分不够。负对照要证明的是「C2 那一环没被放过」，
   // 而不是「总分碰巧不是 1.0」。
   const critProblems = [];
   for (const [id, want] of Object.entries(c.expect_criteria ?? {})) {
     const got = accuracy.results.find((r) => r.id === id)?.result;
-    if (got !== want) critProblems.push(`${id} 判成 ${got ?? '（缺该判据）'}，期望 ${want}`);
+    if (got !== want)
+      critProblems.push(`${id} 判成 ${got ?? '（缺该判据）'}，期望 ${want}`);
   }
   for (const [id, want] of Object.entries(c.expect_deployment_checks ?? {})) {
     const got = deployment.checks.find((r) => r.id === id)?.result;
-    if (got !== want) critProblems.push(`${id} 判成 ${got ?? '（缺该判据）'}，期望 ${want}`);
+    if (got !== want)
+      critProblems.push(`${id} 判成 ${got ?? '（缺该判据）'}，期望 ${want}`);
   }
 
   // 手术有效性断言：证明「手术后的报告」确实是手术后的那份，
@@ -356,10 +539,14 @@ for (const c of CASES) {
     const sec = sections[spec.section] ?? '';
     const hit = new RegExp(spec.pattern, 'i').test(sec);
     if (label === 'expect_present' && !hit) {
-      mutProblems.push(`${spec.section} 节里应当出现「${spec.pattern}」，实际没有`);
+      mutProblems.push(
+        `${spec.section} 节里应当出现「${spec.pattern}」，实际没有`,
+      );
     }
     if (label === 'expect_absent' && hit) {
-      mutProblems.push(`${spec.section} 节里不应出现「${spec.pattern}」，实际出现了（手术没生效？）`);
+      mutProblems.push(
+        `${spec.section} 节里不应出现「${spec.pattern}」，实际出现了（手术没生效？）`,
+      );
     }
   }
 
@@ -371,31 +558,42 @@ for (const c of CASES) {
     mutProblems.length === 0;
   if (!ok) failures += 1;
   console.log(
-    `${ok ? '[PASS]' : '[FAIL]'} ${c.name}\n`
-    + `        准确率 ${accuracy.score}（期望 ${c.expect.accuracy}，tier=${accuracy.tier}）`
-    + ` | 发布归因 ${deployment.verdict}（期望 ${c.expect.deployment}）`
-    + ` | 判定 ${deployment.correct}（期望 ${c.expect.correct}）`
-    + (c.expect_criteria
-      ? ` | 判据 ${Object.entries(c.expect_criteria)
-        .map(([id, want]) => `${id}=${accuracy.results.find((r) => r.id === id)?.result ?? '—'}(期望${want})`)
-        .join(' ')}`
-      : ''),
+    `${ok ? '[PASS]' : '[FAIL]'} ${c.name}\n` +
+      `        准确率 ${accuracy.score}（期望 ${c.expect.accuracy}，tier=${accuracy.tier}）` +
+      ` | 发布归因 ${deployment.verdict}（期望 ${c.expect.deployment}）` +
+      ` | 判定 ${deployment.correct}（期望 ${c.expect.correct}）` +
+      (c.expect_criteria
+        ? ` | 判据 ${Object.entries(c.expect_criteria)
+            .map(
+              ([id, want]) =>
+                `${id}=${accuracy.results.find((r) => r.id === id)?.result ?? '—'}(期望${want})`,
+            )
+            .join(' ')}`
+        : ''),
   );
   if (!ok) {
     for (const p of critProblems) console.log(`        判据不符：${p}`);
     for (const p of mutProblems) console.log(`        手术不符：${p}`);
     for (const r of accuracy.results) {
-      if (r.result === 'FAIL') console.log(`        未通过：${r.id} ${r.name} → ${(r.missing_patterns ?? []).join(' | ')}`);
+      if (r.result === 'FAIL')
+        console.log(
+          `        未通过：${r.id} ${r.name} → ${(r.missing_patterns ?? []).join(' | ')}`,
+        );
     }
     for (const ch of deployment.checks) {
-      if (ch.result === 'FAIL') console.log(`        未通过：${ch.id} ${ch.name}`);
+      if (ch.result === 'FAIL')
+        console.log(`        未通过：${ch.id} ${ch.name}`);
     }
   }
 }
 
 console.log('');
 if (failures) {
-  console.log(`校准失败：${failures}/${CASES.length} 项与人工审计结论不一致。\n`);
+  console.log(
+    `校准失败：${failures}/${CASES.length} 项与人工审计结论不一致。\n`,
+  );
   process.exit(1);
 }
-console.log(`校准通过：${CASES.length}/${CASES.length} 项与人工审计结论一致。\n`);
+console.log(
+  `校准通过：${CASES.length}/${CASES.length} 项与人工审计结论一致。\n`,
+);

@@ -24,13 +24,27 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const RUNS = resolve(dirname(fileURLToPath(import.meta.url)));
+const REPO_ROOT = resolve(RUNS, '..', '..');
 const DRY_RUN = process.argv.includes('--dry-run');
 
-const { scoreReport } = await import(new URL('./score-report.mjs', import.meta.url).href);
+const { scoreReport } = await import(
+  new URL('./score-report.mjs', import.meta.url).href
+);
 
-/** 旧分数文件里的路径可能是相对的（相对 incident/runs），也可能是绝对的。 */
+/**
+ * 旧分数文件里的路径有三种写法：
+ *   1. 相对 incident/runs（`agent-report-….md`）——大多数轮次
+ *   2. 绝对路径（`/mnt/…/incident/runs/…`）——最近几轮
+ *   3. `<repo>/incident/runs/…`——**脱敏过的**（11-03 那轮手工替换过）
+ *
+ * 第 3 种以前会被当成「报告读不到」**静默跳过**——那一轮于是留在了旧 rubric 下，
+ * 指标表里混着两个版本，而表本身看不出来。这就是 L1 改动面第 14 项说的
+ * 「脱敏是手工的」的代价：现在把 `<repo>` 也认了，别再跳过。
+ */
 function resolveMaybe(p) {
   if (!p) return null;
+  if (p.startsWith('<repo>/'))
+    return join(REPO_ROOT, p.slice('<repo>/'.length));
   if (p.startsWith('/')) return p;
   return join(RUNS, p);
 }
@@ -82,26 +96,38 @@ for (const f of scoreFiles) {
     const archived = readFileSync(archivePath, 'utf8');
     if (archived !== readFileSync(path, 'utf8')) {
       process.stderr.write(
-        `归档已存在且内容不同：${archiveName}\n`
-        + '  这一轮在归档之后又被改过。先查清楚，别拿新的盖掉旧的。\n',
+        `归档已存在且内容不同：${archiveName}\n` +
+          '  这一轮在归档之后又被改过。先查清楚，别拿新的盖掉旧的。\n',
       );
       process.exit(1);
     }
   }
 
   const manifestPath = join(RUNS, `round-manifest-${stamp}.json`);
-  const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : null;
+  const manifest = existsSync(manifestPath)
+    ? JSON.parse(readFileSync(manifestPath, 'utf8'))
+    : null;
 
   const changed =
     old.root_cause_accuracy !== score.root_cause_accuracy ||
     old.accuracy_tier !== score.accuracy_tier ||
     old.deployment_attribution !== score.deployment_attribution;
 
-  rows.push({ stamp, file: f, archiveName, changed, old, score, manifest, manifestPath });
+  rows.push({
+    stamp,
+    file: f,
+    archiveName,
+    changed,
+    old,
+    score,
+    manifest,
+    manifestPath,
+  });
 
   if (DRY_RUN) continue;
 
-  if (!existsSync(archivePath)) writeFileSync(archivePath, readFileSync(path, 'utf8'));
+  if (!existsSync(archivePath))
+    writeFileSync(archivePath, readFileSync(path, 'utf8'));
   writeFileSync(path, JSON.stringify(score, null, 2));
   if (manifest) {
     manifest.score = {
@@ -119,13 +145,15 @@ for (const f of scoreFiles) {
 }
 
 console.log(`\nrubric：${rows[0]?.score.rubric_version ?? '—'}\n`);
-console.log('| 轮次 | 旧版本 | 旧分数 | 新分数 | 旧发布归因 | 新发布归因 | 变化 |');
+console.log(
+  '| 轮次 | 旧版本 | 旧分数 | 新分数 | 旧发布归因 | 新发布归因 | 变化 |',
+);
 console.log('| --- | --- | --- | --- | --- | --- | --- |');
 for (const r of rows) {
   console.log(
-    `| ${r.stamp} | ${r.old.rubric_version} | ${r.old.root_cause_accuracy}（${r.old.accuracy_tier}） | `
-    + `${r.score.root_cause_accuracy}（${r.score.accuracy_tier}） | ${r.old.deployment_attribution} | `
-    + `${r.score.deployment_attribution} | ${r.changed ? '**变了**' : '无'} |`,
+    `| ${r.stamp} | ${r.old.rubric_version} | ${r.old.root_cause_accuracy}（${r.old.accuracy_tier}） | ` +
+      `${r.score.root_cause_accuracy}（${r.score.accuracy_tier}） | ${r.old.deployment_attribution} | ` +
+      `${r.score.deployment_attribution} | ${r.changed ? '**变了**' : '无'} |`,
   );
 }
 const changedCount = rows.filter((r) => r.changed).length;

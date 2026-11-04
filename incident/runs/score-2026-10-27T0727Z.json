@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-27T0727Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v5",
+  "rubric_version": "v6",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…### 【根因假设】 **置信度：0.92** **机制**：运行时旋钮 `DOWNSTREAM_TIMEOUT_MS` 被改到 **1 毫秒**（旋钮文件最后修改 07:24:20.061Z…"
+      "evidence": "…### 【根因假设】 **置信度：0.92** **机制**：运行时旋钮 `DOWNSTREAM_TIMEOUT_MS` 被改到 **1 毫秒**（旋钮文件最后修改 07:24:20.061Z，容器 07:24:21Z 重建加载），…"
     },
     {
       "id": "F4-C2",
@@ -33,7 +33,7 @@
   "deployment_checks": [
     {
       "id": "F4-D1",
-      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "name": "报告把发布排除为触发源（或降级为必要条件），并且指认了配置层的触发源",
       "result": "PASS",
       "evidence": "…9.509Z）**20 小时 55 分**，远超 15 分钟窗口 → 按规则**排除该发布作为本次故障的触发源**。但它不是无关变更，见下一步。 ## 步骤 5 · Git diff（已执…"
     },
@@ -76,7 +76,7 @@
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v4",
+    "rubric_version": "v5",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

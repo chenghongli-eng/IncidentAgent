@@ -1,0 +1,104 @@
+{
+  "stamp": "2026-11-04T0317Z",
+  "fault": "F4",
+  "started_at": "2026-11-04T03:17:50.485Z",
+  "preflight": [
+    {
+      "id": "P1",
+      "ok": true,
+      "detail": "三个容器都在跑：target-service, incident-prometheus, incident-alertmanager"
+    },
+    {
+      "id": "P2",
+      "ok": true,
+      "detail": "挂载源指向当前仓库：/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/workspace/logs->/app/logs"
+    },
+    {
+      "id": "P3",
+      "ok": true,
+      "detail": "app.log 在增长（882920 → 883373 字节）"
+    },
+    {
+      "id": "P4",
+      "ok": true,
+      "detail": "基线 5xx 比例 = 0"
+    },
+    {
+      "id": "P5",
+      "ok": true,
+      "detail": "开跑前没有告警在 firing"
+    },
+    {
+      "id": "P8",
+      "ok": true,
+      "detail": "服务仓库 HEAD 在窗口外（21 分钟前）：34b43c8 2026-11-04T10:56:33+08:00 fix(tool): refuse metrics ranges that end in the future"
+    },
+    {
+      "id": "P10",
+      "ok": true,
+      "detail": "provider=deepseek model=deepseek-v4-flash[1m]"
+    },
+    {
+      "id": "P9",
+      "ok": true,
+      "detail": "工作区就位（custom_cwd=/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/workspace，folder=flow-mvkttud1-ah1b）"
+    },
+    {
+      "id": "P11",
+      "ok": true,
+      "detail": "Miniclaw 服务在线（HTTP 200）"
+    },
+    {
+      "id": "P12",
+      "ok": true,
+      "detail": "provider 连通（1650ms，exactMatch=true）"
+    }
+  ],
+  "setup": {
+    "note": "台子已在静默态：缺陷在线但 order 2 不在压测路径"
+  },
+  "settle": {
+    "skipped": true
+  },
+  "injection": {
+    "fault": "F4",
+    "at": "2026-11-04T03:18:06.657Z",
+    "knob": "DOWNSTREAM_TIMEOUT_MS",
+    "from": "2000",
+    "to": "1",
+    "changed": [
+      "运行时旋钮"
+    ],
+    "unchanged": [
+      "代码",
+      "压测路径",
+      "数据"
+    ],
+    "note": "本轮只改运行时旋钮，代码一行没动"
+  },
+  "alert": null,
+  "agent": null,
+  "channel_audit": null,
+  "restore": {
+    "ok": true,
+    "at": "2026-11-04T03:23:28.081Z",
+    "knob": "DOWNSTREAM_TIMEOUT_MS",
+    "to": "2000"
+  },
+  "score": null,
+  "round_valid": false,
+  "invalid_reason": "本轮中止：300 秒内 HighServerErrorRate 没有 firing。故障可能没注入成功，别在没故障的台子上跑 Agent。",
+  "manifest_path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/round-manifest-2026-11-04T0317Z.json",
+  "provider": {
+    "defaultProviderId": "45b34873576002a2",
+    "name": "deepseek",
+    "model": "deepseek-v4-flash[1m]",
+    "enabledCount": 2
+  },
+  "abort_stop": {
+    "status": 200
+  },
+  "finished_at": "2026-11-04T03:23:48.227Z",
+  "aborted": "300 秒内 HighServerErrorRate 没有 firing。故障可能没注入成功，别在没故障的台子上跑 Agent。",
+  "aborted_stack": "Error: 300 秒内 HighServerErrorRate 没有 firing。故障可能没注入成功，别在没故障的台子上跑 Agent。\n    at fail (file:///mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/run-round.mjs:283:9)\n    at main (file:///mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/run-round.mjs:857:5)"
+}

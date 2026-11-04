@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0423Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v5",
+  "rubric_version": "v6",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -33,9 +33,9 @@
   "deployment_checks": [
     {
       "id": "F4-D1",
-      "name": "报告把发布排除为触发源，或明确把它降级为必要条件",
+      "name": "报告把发布排除为触发源（或降级为必要条件），并且指认了配置层的触发源",
       "result": "PASS",
-      "evidence": "….657)` | **故障先于本次部署 ⇒ 排除该部署作为「起因」** | | 部署窗口内无代码变更 | **排除发布/代码假设** | | 部署窗口内存在运行期配置变更（knob 文件 04:…"
+      "evidence": "…应记忆里的锚点口径 1）。 ### 3. deployment-window：部署不是起因，但把已存在的坏配置带进了新容器 ``` runtime started →…"
     },
     {
       "id": "F4-D2",
@@ -76,7 +76,7 @@
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v4",
+    "rubric_version": "v5",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",
