@@ -142,3 +142,4 @@ Miniclaw 服务在线。一轮的完整流程由 `runs/run-round.mjs` 编排，
 - [RESUME.md](RESUME.md) — 断点存档：当前台子状态、最近做到哪、下一步
 - [L1-WORKSPACE-MOVE.md](L1-WORKSPACE-MOVE.md) — 工作区搬出仓库的原因与做法
 - [REAL-TARGET.md](REAL-TARGET.md) — 接入真实公司项目作为靶子的方案与前置检查
+- [REAL-TARGET-SURVEY.md](REAL-TARGET-SURVEY.md) — 10 个候选项目的勘察结果与选型建议

@@ -121,6 +121,11 @@ Miniclaw 这边接一个本地 OpenAI 兼容端点只是**改 Provider 配置**�
 
 - [ ] **能本地起**（或起一个隔离副本）。起不来就免谈。
 - [ ] **有 Prometheus 指标**。Micrometer / actuator 最好；没有的话先接。
+      **注意**：这批公司项目的 actuator 端点**默认全是关的**
+      （`management.server.port: -1` 或 `endpoints.enabled-by-default: false`），
+      但 `micrometer-registry-prometheus` 依赖都在。
+      本地跑时用三个环境变量就能开，**不需要改源码**——
+      详见 [REAL-TARGET-SURVEY.md](REAL-TARGET-SURVEY.md) 的「发现一」。
       目标：至少 `http_server_requests`（按 uri/status）、JVM、连接池、GC
 - [ ] **有结构化日志**，且带时间戳、级别、异常栈
 - [ ] **有 Git 历史**，且历史深度足够（能回到故障发生时的版本）
@@ -162,4 +167,5 @@ incident/targets/<name>.json
 ## 相关
 
 - [README.md](README.md) — 实验室定位与改动政策
+- [REAL-TARGET-SURVEY.md](REAL-TARGET-SURVEY.md) — 10 个候选项目的勘察结果与选型建议
 - [RESUME.md](RESUME.md) — 当前断点状态
