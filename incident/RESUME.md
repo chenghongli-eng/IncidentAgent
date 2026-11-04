@@ -1866,10 +1866,10 @@ node incident/runs/sync-agent-profile.mjs   # incident/agent-profile/identity.js
 #     必须 0 命中。
 #     ⚠️ 必须在**仓库根目录**跑（它用相对路径定位工作区、从 CWD 找数据库）。
 #        跑错目录现在会 exit 1 并明确报出「不能报告 0 命中」及是哪个面没扫到。
-#     ⚠️ 它**没有真正覆盖软删行**（listWorkspaceMemory 过滤了 status='deleted'），
-#        tombstone 正文靠 0.5 步的 memory-de-leak.mjs 兜底。
-#     ⚠️ 聊天历史**不在扫描面里**——上一轮冒烟测试留在 incident-lab 群里的那条消息
-#        必须在开跑前清掉。
+#     ⚠️ 【2026-11-04 更新】软删行**已覆盖**（工作区记忆面直查 workspace_memory_items，
+#        不按 status 过滤）；聊天历史与 Pi 会话记录也**已在扫描面里**（第 9、10 面）。
+#        所以这一条现在的阻断判据是「聊天历史与 Pi 会话记录必须为空」——
+#        runner 的 clear-history 步骤会先清掉它们再重跑扫描。
 node incident/runs/leak-scan.mjs
 cd incident
 
@@ -1994,7 +1994,10 @@ Agent 看到的是一条只动 `tools/` 的普通修复提交。
   **聊天历史**（`data/db/messages.db`）与 **Pi 会话记录**（`data/sessions/**/.claude/sessions`）
   两个面，扫不到任何一个面时报「不能报告 0 命中」并 exit 1；
   四个负对照（A 脏 / B 净 / C 半脏 / D 扫不到）证明该拦的拦得住、该放的放得过。
-  **缺口 ①（软删行）仍未补**，仍靠 `scrubTombstone` 兜底。
+  **缺口 ①（软删行）已于 2026-11-04 补进扫描器**：工作区记忆面改成直查
+  `workspace_memory_items`（不按 status 过滤），软删/被取代/冲突的条目一起扫；
+  负对照新增 E 用例（一条 `status='deleted'` 的记忆带答案 → 必须命中）→ 5/5。
+  `scrubTombstone` 继续留着，但现在是**双保险**而不是唯一防线。
 - **【新增】F5 需要重定义**：按原定义（只调 `DB_POOL_SIZE`）在本实验台不可观测。
   可选方向：把连接获取超时纳入 F5 定义 + 配套负载发生器（`incident/faults/load-hammer.mjs`
   已写好），但 Hikari 250ms 下限决定了失败率只能在 0.5% 量级，**达不到 5% 告警阈值**——
@@ -2003,8 +2006,14 @@ Agent 看到的是一条只动 `tools/` 的普通修复提交。
   `status='deleted'`，`search` 会过滤掉它，但 `getWorkspaceMemory` 不过滤——
   拿着 id 仍能取回原文。本轮靠额外清空 tombstone 正文绕开，**底座本身该修**。
 - **【新增】FTS5 trigram 短语匹配的全局排查**：底座检索用 `ftsPhrase(query)`，
-  查询串必须是原文里**连续的一段**。已改 `historical-incident-lookup` 的示例（commit `4b3ddc1`），
-  但其它 skill / 提示词里可能还有堆关键词的检索式，**全局还没查**。
+  查询串必须是原文里**连续的一段**。已改 `historical-incident-lookup` 的示例（commit `4b3ddc1`）。
+  ⚠️ **【2026-11-04 排查完毕】**：全量扫过 8 个 Skill 的源目录、运行时副本、Agent Profile 四段 prompt、
+  每轮的提问模板（`runs/diag-prompt.txt`）与 MCP 工具描述——**检索式只有 `historical-incident-lookup`
+  那一处**，已是修好的形态；运行时副本与源目录逐字节一致。
+  并且在真实库上验了行为：`"target-service 5xx"`（技能里的示例）→ 1 命中，
+  `"target-service"` / `"5xx"` → 各 1 命中，
+  `"5xx NullPointerException 下游 调用失败"`（关键词堆砌）→ **0 命中**，
+  与技能里写的警告一致。**没有第二处堆关键词的检索式。**
 - **只读 MCP 工具通道**（`pending`）。CLI 通道已经验证可用且够用，MCP 封装一直没做，
   因为 Pi SDK 的 MCP 兼容性和 `@modelcontextprotocol/sdk` 都不是本项目依赖。没验证之前别急着写。
 - **logs 通道支持 `.gz`**（F2 那轮踩到，10-26 那轮又踩到一次：Agent 为了数「静默期 0 次 NPE」
@@ -2307,10 +2316,10 @@ provider 没拿到完整回复就**不开跑**。
 
 所以 L1 有三条互斥量级的路，选哪条要人拍板：
 
-| 方案 | 效果 | 代价 |
-| --- | --- | --- |
-| A. 工作区整体挪出仓库 | 仓库（含真值、faults、历史报告）整体不在 cwd 的祖先链上 | docker 挂载、`custom_cwd`、mount allowlist、`identity.json` 的 LAB 路径、run-round 的 WORKSPACE、P2 挂载检查全要改；**未来轮次的路径脱敏约定要另立** |
-| B. 只挪真值与 faults + 重写外仓历史 | 真值彻底不可达 | 外仓 32 个提交的 SHA 全部要重映射（审计件引用了三个 SHA）；风险高于收益 |
-| C. 维持现状 | 无 | 边界只靠「Agent 自觉」+ 通道审计事后判污染 |
+| 方案                                | 效果                                                    | 代价                                                                                                                                                 |
+| ----------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 工作区整体挪出仓库               | 仓库（含真值、faults、历史报告）整体不在 cwd 的祖先链上 | docker 挂载、`custom_cwd`、mount allowlist、`identity.json` 的 LAB 路径、run-round 的 WORKSPACE、P2 挂载检查全要改；**未来轮次的路径脱敏约定要另立** |
+| B. 只挪真值与 faults + 重写外仓历史 | 真值彻底不可达                                          | 外仓 32 个提交的 SHA 全部要重映射（审计件引用了三个 SHA）；风险高于收益                                                                              |
+| C. 维持现状                         | 无                                                      | 边界只靠「Agent 自觉」+ 通道审计事后判污染                                                                                                           |
 
 在拍板之前，**这一轮不做任何挪动**——动一半比不动更糟（会让人以为边界已经成立）。
