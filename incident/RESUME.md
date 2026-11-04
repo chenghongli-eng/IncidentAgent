@@ -4,6 +4,51 @@
 
 ## 一句话状态
 
+**【2026-11-04 13:00Z】L1 方案 A 已执行：Agent 的工作区整体搬到仓库外
+（`/mnt/my-work/incident-lab/workspace`，连它自己的 `.git` 一起搬）。
+工作区与答案键**不再相邻**，并且多了一条可执行闸门 W 守着这件事。**
+
+- **搬了什么**：`incident/workspace/`（服务仓库 + `.git` + `logs/` + `tools/` + `target-service/`）
+  → `/mnt/my-work/incident-lab/workspace/`。服务仓库历史链不断（`git log` 仍到 `34b43c8` 之后）。
+- **实际改动 17 处**（计划写的是 14–16；执行中新发现 2 处，见下），
+  并且**新增了路径唯一真相源 `incident/lab-paths.json`**：
+  7 个脚本不再各自写死工作区路径，改成读这一个文件——
+  「搬家」从此是改一个文件，而不是改 8 个常量。
+  - 计划里的 14–16 处：`custom_cwd`（DB）、`config/mount-allowlist.json`、
+    `incident/docker-compose.yml`（build context + logs 挂载）、`identity.json`（+ 同步入库）、
+    `run-round.mjs`（含 P2 断言改成「挂载源 == 工作区」）、`channel-audit.mjs`、
+    `leak-scan.mjs`、`rebuild-service-history.mjs`、`metrics-range-control.mjs`、
+    `channel-audit-control.mjs`；
+  - **执行中新发现的第 15 处**：`incident/faults/faults.mjs` 的 `TARGET_SERVICE_DIR`
+    默认值是 `../workspace/target-service/`（相对 `incident/`）——计划里没列，
+    漏改会让注入脚本往一个不存在的目录写，**注入静默失败**；
+  - **执行中新发现的第 16 处**：`data/config/container-env/flow-mvkttud1-ah1b.json`
+    里的 `INCIDENT_LAB` 指向旧 CLI 路径——漏改则 Agent 的 `$INCIDENT_LAB` 直接断链。
+- **验证（全过，不是「看着像对的」）**：
+  - `node incident/runs/run-round.mjs --fault F4 --dry-run` → **P1–P12 全过**
+    （含 P2 挂载源断言已改成对新工作区生效）；
+  - **闸门 W**（新增 `incident/runs/gate-w-workspace-isolation.mjs`）→ 通过，
+    查三件事：工作区根往上 2 层没有答案键文件、提示词四段不含仓库根路径/旋钮目录、
+    仓库内旧路径已清空且仓库根不在工作区祖先链上；
+  - **闸门 W 的负对照**（新增 `gate-w-control.mjs`）→ **8/8**，
+    第一版闸门自己犯过一个错（字符串前缀判「是否在仓库内」把
+    `/mnt/my-work/incident-lab` 误判成 `/mnt/my-work/ai_coding` 的子目录），
+    由对照抓住；**闸门自己出错时它报出来的一切都是假的**；
+  - `channel-audit-control.mjs` → **7/7**（新增 I 例：
+    `cd ../runs && cat ground-truth/F2.json` 这种**短相对跳现在不再指向答案键**，
+    只报越界不报污染——邻接确实没了；同时 A/E 两例改成**真的能落到答案键的相对路径**，
+    证明审计的判别能力没有被搬家削弱）；
+  - `metrics-range-control.mjs` → 5/5；`leak-scan.mjs` 正常拦截（上一轮历史还在，
+    真实轮次会先 `clear-history`）。
+- **诚实口径（A 不解决的必须说清）**：
+  这一轮之后只能说「**答案键与工作区不再相邻**，提示词里不再出现仓库路径，
+  且有可执行闸门 W 保证」；
+  **不能说「答案键对 Agent 不可达」**——外仓 git 历史里的旧副本
+  （`git show HEAD~n:incident/runs/ground-truth/F2.json` 仍拿得到）、
+  家目录（`~/.config/miniclaw-lab/lab.env` 那条路径 Agent 越界读到过）
+  以及**没有沙箱、没有 uid 隔离的 Bash 工具**都还在。
+  边界仍然是「Agent 自觉 + 通道审计事后判污染」，只是邻接性没了。
+
 **【2026-11-04 05:20Z】F4 × deepseek 那轮跑完了——但它**作废**（通道污染），
 而且它的 0 分是**判据的锅**不是 Agent 的锅。判据已改到 **v6**（校准 16/16，11 轮全量重打，
 **只有这一轮变**）。有效证据仍是 4 轮：F2 `0738Z` + F2 `0324Z` + F4 `0423Z` / `0431Z`。**
@@ -49,8 +94,7 @@
   方法记忆按故障类分流（第 5 条「要查运行时配置层」每轮都写，对 F4 是结构性偏差）、
   旋钮文件权限收紧、settle 时长加余量（≥18 分钟，别让注入时刻贴着 15 分钟窗口边界）。
 - **下一件该干的代码活**：
-  1. **L1 方案 A**（用户 11-04 已拍板）：把 Agent 的工作区**整体挪出仓库**，
-     改动面 14–16 处 + 新增可执行闸门 W，方案见 `incident/L1-WORKSPACE-MOVE.md`；
+  1. ~~**L1 方案 A**~~ —— **已执行**（见本节开头的 2026-11-04 13:00Z 记录）；
   2. 实验室 L2/L4（注入记录出仓、记忆分流）——这两条直接决定下一轮的可信度；
   3. **F4 的受控对照组**（充分性实验）：F4 至今**有效轮 0**，两个受控对照组一次没跑过。
 

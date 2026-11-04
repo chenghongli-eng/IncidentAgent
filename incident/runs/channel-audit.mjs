@@ -39,7 +39,9 @@ import { homedir } from 'node:os';
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '../..');
 
-const WORKSPACE = join(ROOT, 'incident/workspace');
+const WORKSPACE = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+).workspaceRoot;
 const SESSION_ROOT = join(ROOT, 'data/sessions');
 
 /** Agent 有权读取的面：工作区（隔离仓库）+ 它自己的会话目录 + 临时目录。 */

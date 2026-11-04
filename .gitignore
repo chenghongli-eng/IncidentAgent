@@ -84,8 +84,13 @@ models.json
 incident/logs/
 incident/*-data/
 
-# The diagnosis Agent's workspace is its own git repository (see the
-# "工作区重构成什么样" section of incident/RESUME.md): the agent must only be
-# able to read the target service's history through that repo, never the lab's
-# own history, which documents the injected faults.
-incident/workspace/
+# The diagnosis Agent's workspace used to live here (incident/workspace/) as
+# its own git repository, so the agent could read the target service's history
+# through that repo and never the lab's own history, which documents the
+# injected faults. It moved OUT of the repository on 2026-11-04
+# (see incident/L1-WORKSPACE-MOVE.md): the workspace now lives at
+# /mnt/my-work/incident-lab/workspace, so that it is no longer adjacent to the
+# answer key. The ignore rule is deliberately gone -- if a copy reappears at
+# the old path, it must show up in `git status` as visible drift instead of
+# being swallowed. Gate W (incident/runs/gate-w-workspace-isolation.mjs)
+# fails if that path exists again.

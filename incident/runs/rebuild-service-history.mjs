@@ -32,8 +32,12 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const REPO = join(ROOT, 'incident/workspace');
-const ARCHIVE_DIR = process.env.INCIDENT_HISTORY_ARCHIVE ?? join(process.env.HOME, 'incident-lab-archive');
+const REPO = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+).workspaceRoot;
+const ARCHIVE_DIR =
+  process.env.INCIDENT_HISTORY_ARCHIVE ??
+  join(process.env.HOME, 'incident-lab-archive');
 const ARCHIVE = join(ARCHIVE_DIR, 'service-repo-pre-rebuild.bundle');
 const DRY_RUN = process.argv.includes('--dry-run');
 
@@ -52,7 +56,12 @@ function git(args, opts = {}) {
 }
 
 function gitRaw(args, opts = {}) {
-  return execFileSync('git', args, { cwd: REPO, encoding: 'utf8', maxBuffer: 64 << 20, ...opts });
+  return execFileSync('git', args, {
+    cwd: REPO,
+    encoding: 'utf8',
+    maxBuffer: 64 << 20,
+    ...opts,
+  });
 }
 
 function blobOfWorkingTree(path) {
@@ -65,14 +74,18 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 function parentOrEmpty(sha) {
   try {
     // The root commit has no parent; keep git's complaint off stderr.
-    return git(['rev-parse', '--verify', `${sha}^`], { stdio: ['pipe', 'pipe', 'pipe'] });
+    return git(['rev-parse', '--verify', `${sha}^`], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
   } catch {
     return EMPTY_TREE;
   }
 }
 
 function changedFiles(sha) {
-  return git(['diff', '--name-only', parentOrEmpty(sha), sha]).split('\n').filter(Boolean);
+  return git(['diff', '--name-only', parentOrEmpty(sha), sha])
+    .split('\n')
+    .filter(Boolean);
 }
 
 function treeWithRebaselinedBlobs(commit) {
@@ -100,12 +113,14 @@ function commitWithTree(oldCommit, newTree, newParent) {
   // it becomes a no-op and is dropped by the caller.
   if (origTree !== newTree) {
     newHeader = header.replace(/^tree .*$/m, `tree ${newTree}`);
-    if (newHeader === header) throw new Error(`could not rewrite tree line of ${oldCommit}`);
+    if (newHeader === header)
+      throw new Error(`could not rewrite tree line of ${oldCommit}`);
   }
   if (newParent) {
     const before = newHeader;
     newHeader = newHeader.replace(/^parent .*$/m, `parent ${newParent}`);
-    if (newHeader === before) throw new Error(`could not rewrite parent line of ${oldCommit}`);
+    if (newHeader === before)
+      throw new Error(`could not rewrite parent line of ${oldCommit}`);
   }
   return git(['hash-object', '-t', 'commit', '-w', '--stdin'], {
     input: newHeader + '\n\n' + message,
@@ -118,7 +133,9 @@ function fail(msg) {
 }
 
 // ---- preflight -------------------------------------------------------------
-const oldChain = git(['rev-list', '--reverse', 'HEAD']).split('\n').filter(Boolean);
+const oldChain = git(['rev-list', '--reverse', 'HEAD'])
+  .split('\n')
+  .filter(Boolean);
 if (!oldChain.length) fail('no commits in the service repo');
 const oldHead = oldChain[oldChain.length - 1];
 
@@ -128,17 +145,23 @@ for (const path of REBASELINE) {
   const headBlob = git(['rev-parse', `HEAD:${path}`]);
   const workBlob = blobOfWorkingTree(path);
   if (headBlob !== workBlob) {
-    fail(`${path} differs between HEAD (${headBlob.slice(0, 7)}) and the working tree (${workBlob.slice(0, 7)}); `
-      + 'the working tree must hold the cleaned content');
+    fail(
+      `${path} differs between HEAD (${headBlob.slice(0, 7)}) and the working tree (${workBlob.slice(0, 7)}); ` +
+        'the working tree must hold the cleaned content',
+    );
   }
 }
 
 // Nothing outside the re-baselined files may differ between HEAD and the
 // working tree, or the rebuild would silently change agent-visible content.
 const dirty = git(['status', '--porcelain']).split('\n').filter(Boolean);
-const unexpected = dirty.filter((l) => !REBASELINE.some((p) => l.slice(3).endsWith(p)));
+const unexpected = dirty.filter(
+  (l) => !REBASELINE.some((p) => l.slice(3).endsWith(p)),
+);
 if (unexpected.length) {
-  fail(`the working tree has changes outside ${REBASELINE.join(', ')}:\n  ${unexpected.join('\n  ')}`);
+  fail(
+    `the working tree has changes outside ${REBASELINE.join(', ')}:\n  ${unexpected.join('\n  ')}`,
+  );
 }
 
 // ---- rebuild ---------------------------------------------------------------
@@ -154,7 +177,11 @@ for (const old of oldChain) {
   if (parent) {
     const parentTree = git(['rev-parse', `${parent}^{tree}`]);
     if (newTree === parentTree) {
-      dropped.push({ old, new: newSha, subject: git(['log', '-1', '--format=%s', old]) });
+      dropped.push({
+        old,
+        new: newSha,
+        subject: git(['log', '-1', '--format=%s', old]),
+      });
       continue;
     }
   }
@@ -167,16 +194,24 @@ if (!newChain.length) fail('the rebuild produced an empty chain');
 // ---- invariants ------------------------------------------------------------
 // 1. The final tree must be byte-identical to the old final tree.
 const finalTreeOld = git(['rev-parse', `${oldHead}^{tree}`]);
-const finalTreeNew = git(['rev-parse', `${newChain[newChain.length - 1].renamed}^{tree}`]);
-if (finalTreeOld !== finalTreeNew) fail('the rebuilt HEAD tree differs from the old HEAD tree');
+const finalTreeNew = git([
+  'rev-parse',
+  `${newChain[newChain.length - 1].renamed}^{tree}`,
+]);
+if (finalTreeOld !== finalTreeNew)
+  fail('the rebuilt HEAD tree differs from the old HEAD tree');
 
 // 2. Each rebuilt commit may differ from its old counterpart only in the
 //    re-baselined files.
 for (const { old, renamed } of newChain) {
-  const changed = git(['diff', '--name-only', old, renamed]).split('\n').filter(Boolean);
+  const changed = git(['diff', '--name-only', old, renamed])
+    .split('\n')
+    .filter(Boolean);
   const outside = changed.filter((p) => !REBASELINE.includes(p));
   if (outside.length) {
-    fail(`commit ${renamed} differs from ${old} outside the re-baselined files: ${outside.join(', ')}`);
+    fail(
+      `commit ${renamed} differs from ${old} outside the re-baselined files: ${outside.join(', ')}`,
+    );
   }
 }
 
@@ -189,7 +224,9 @@ for (const { old, renamed } of newChain) {
   const newFiles = changedFiles(renamed);
   const extra = newFiles.filter((f) => !oldFiles.includes(f));
   if (extra.length) {
-    fail(`commit ${renamed} touches files its counterpart ${old} did not: ${extra.join(', ')}`);
+    fail(
+      `commit ${renamed} touches files its counterpart ${old} did not: ${extra.join(', ')}`,
+    );
   }
   for (const f of oldFiles) {
     if (REBASELINE.includes(f)) continue;
@@ -206,12 +243,14 @@ if (DRY_RUN) {
   process.stdout.write('dry run, nothing written\n');
 } else {
   mkdirSync(ARCHIVE_DIR, { recursive: true });
-  writeFileSync(join(ARCHIVE_DIR, 'README.txt'),
-    'service-repo-pre-rebuild.bundle holds the service repo history as it was before the\n'
-    + '2026-10-30 rebuild. The audit file and the claim ledger cite those SHAs.\n'
-    + 'Read it without touching the lab repo:\n'
-    + '  git bundle verify service-repo-pre-rebuild.bundle\n'
-    + '  git clone service-repo-pre-rebuild.bundle /tmp/old-service-repo\n');
+  writeFileSync(
+    join(ARCHIVE_DIR, 'README.txt'),
+    'service-repo-pre-rebuild.bundle holds the service repo history as it was before the\n' +
+      '2026-10-30 rebuild. The audit file and the claim ledger cite those SHAs.\n' +
+      'Read it without touching the lab repo:\n' +
+      '  git bundle verify service-repo-pre-rebuild.bundle\n' +
+      '  git clone service-repo-pre-rebuild.bundle /tmp/old-service-repo\n',
+  );
   git(['bundle', 'create', ARCHIVE, '--all']);
   git(['bundle', 'verify', ARCHIVE]);
 
@@ -224,9 +263,15 @@ if (DRY_RUN) {
 }
 
 process.stdout.write(`${DRY_RUN ? 'planned' : 'rebuilt'} service history\n`);
-process.stdout.write(`  old chain: ${oldChain.map((c) => c.slice(0, 7)).join(' / ')}\n`);
-process.stdout.write(`  new chain: ${newChain.map((c) => c.renamed.slice(0, 7)).join(' / ')}\n`);
+process.stdout.write(
+  `  old chain: ${oldChain.map((c) => c.slice(0, 7)).join(' / ')}\n`,
+);
+process.stdout.write(
+  `  new chain: ${newChain.map((c) => c.renamed.slice(0, 7)).join(' / ')}\n`,
+);
 for (const d of dropped) {
-  process.stdout.write(`  dropped (became empty): ${d.old.slice(0, 7)} ${d.subject}\n`);
+  process.stdout.write(
+    `  dropped (became empty): ${d.old.slice(0, 7)} ${d.subject}\n`,
+  );
 }
 if (!DRY_RUN) process.stdout.write(`  old chain archived at: ${ARCHIVE}\n`);

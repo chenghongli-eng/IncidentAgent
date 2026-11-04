@@ -79,7 +79,9 @@ try {
 
 const WORKSPACE_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
 const USER_ID = '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4';
-const REPO = join(ROOT, 'incident/workspace/target-service');
+const REPO = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+).serviceDir;
 const SKILL_DIR = join(ROOT, 'data/skills', USER_ID);
 const QUIET = process.argv.includes('--quiet');
 

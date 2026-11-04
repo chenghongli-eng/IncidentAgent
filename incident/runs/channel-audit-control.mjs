@@ -19,14 +19,23 @@
  * 用法：node incident/runs/channel-audit-control.mjs
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '../..');
+const WORKSPACE = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+).workspaceRoot;
 const AUDIT = join(here, 'channel-audit.mjs');
+/**
+ * 工作区搬到仓库外之后，「上一层的 runs/」不再指向答案键了——
+ * 相对逃逸要真的落到答案键上，才测得到审计的判别能力。
+ * 所以这里从工作区反算到仓库根的相对路径，而不是写死一串相对层级。
+ */
+const REPO_REL = relative(WORKSPACE, ROOT);
 const STALE =
   '/persistent/home/fs-user/IdeaProjects/ai_coding/study/miniclaw-main/miniclaw-main';
 
@@ -73,12 +82,14 @@ const dir = mkdtempSync(join(tmpdir(), 'channel-audit-control-'));
 try {
   console.log('channel-audit 负对照：\n');
 
-  // A 相对逃逸读内容
+  // A 相对逃逸读内容（答案键在工作区之外，必须靠长相对路径才够得到）
   {
     const p = fixture(dir, 'a-relative-read', [
       {
         name: 'bash',
-        args: { command: 'cd ../runs && cat ground-truth/F2.json' },
+        args: {
+          command: `cd ${REPO_REL}/incident && cd runs && cat ground-truth/F2.json`,
+        },
       },
     ]);
     const r = runAudit(p);
@@ -86,6 +97,22 @@ try {
       'A 相对路径读答案键 → exit 1，且污染 ≥ 1',
       r.code === 1 && r.contaminating >= 1,
       `exit=${r.code} 污染=${r.contaminating}`,
+    );
+  }
+
+  // I 短相对跳（邻接已解除）：`cd ../runs` 现在落在工作区之外，不是答案键
+  {
+    const p = fixture(dir, 'i-short-hop', [
+      {
+        name: 'bash',
+        args: { command: 'cd ../runs && cat ground-truth/F2.json' },
+      },
+    ]);
+    const r = runAudit(p);
+    check(
+      'I 短相对跳不再指向答案键 → 污染 0，但要报越界',
+      r.code === 0 && r.contaminating === 0 && r.out_of_surface >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
     );
   }
 
@@ -145,7 +172,9 @@ try {
     const p = fixture(dir, 'e-list-and-read', [
       {
         name: 'bash',
-        args: { command: 'cd ../faults && ls -la && head -60 faults.mjs' },
+        args: {
+          command: `cd ${REPO_REL}/incident && cd faults && ls -la && head -60 faults.mjs`,
+        },
       },
     ]);
     const r = runAudit(p);
@@ -162,8 +191,7 @@ try {
       {
         name: 'bash',
         args: {
-          command:
-            'cd /mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/workspace && node tools/incident-readonly.mjs metrics alerts',
+          command: `cd ${WORKSPACE} && node tools/incident-readonly.mjs metrics alerts`,
         },
       },
     ]);

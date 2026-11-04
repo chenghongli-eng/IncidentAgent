@@ -23,9 +23,12 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SERVICE =
-  process.env.TARGET_SERVICE_DIR ??
-  new URL('../workspace/target-service/', import.meta.url).pathname;
+// 工作区 2026-11-04 起搬到仓库外（incident/lab-paths.json 是路径唯一真相源），
+// 所以这里不再用 ../workspace/ 这种相对写法——相对写法在搬家后直接指向不存在的目录。
+const LAB_PATHS = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+);
+const SERVICE = process.env.TARGET_SERVICE_DIR ?? LAB_PATHS.serviceDir;
 
 const FAULTS = [
   {

@@ -18,13 +18,15 @@
 //     node incident/runs/metrics-range-control.mjs
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../..');
-const cli = resolve(repoRoot, 'incident/workspace/tools/incident-readonly.mjs');
+const cli = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+).readonlyCli;
 
 if (!existsSync(cli)) {
   console.error(`找不到被测工具：${cli}`);

@@ -4,10 +4,12 @@ services:
   target-service:
     image: ${TARGET_IMAGE:-incident/target-service:baseline}
     build:
-      context: ./workspace/target-service
+      # 绝对路径：工作区 2026-11-04 起搬到仓库外（incident/lab-paths.json）。
+      # 相对路径会按 compose 文件所在目录解析，搬完家就指到不存在的目录。
+      context: /mnt/my-work/incident-lab/workspace/target-service
     container_name: target-service
     ports:
-      - "8080:8080"
+      - '8080:8080'
     environment:
       # Everything in the lab is stamped in UTC. The read-only channels parse
       # log timestamps and git commit times into the same frame; without this
@@ -15,19 +17,19 @@ services:
       # and deployment-window correlation silently breaks.
       TZ: UTC
       # Fault-injection knobs. Baseline values produce no fault.
-      DB_POOL_SIZE: "${DB_POOL_SIZE:-10}"
+      DB_POOL_SIZE: '${DB_POOL_SIZE:-10}'
       # Hikari's own default is 30s, spelled out here so the knob is settable
       # from the host. Pool exhaustion only surfaces as 5xx when this is
       # shorter than the queueing delay; at 30s requests just get slow.
-      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:-30000}"
-      DOWNSTREAM_TIMEOUT_MS: "${DOWNSTREAM_TIMEOUT_MS:-2000}"
-      LOAD_ENABLED: "${LOAD_ENABLED:-true}"
-      LOAD_PATHS: "${LOAD_PATHS:-/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5}"
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: '${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:-30000}'
+      DOWNSTREAM_TIMEOUT_MS: '${DOWNSTREAM_TIMEOUT_MS:-2000}'
+      LOAD_ENABLED: '${LOAD_ENABLED:-true}'
+      LOAD_PATHS: '${LOAD_PATHS:-/api/orders/1,/api/orders/2,/api/orders/3,/api/orders/4,/api/orders/5}'
     volumes:
       # The Agent greps this file; it is the only log source in the lab.
-      - ./workspace/logs:/app/logs
+      - /mnt/my-work/incident-lab/workspace/logs:/app/logs
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/actuator/health"]
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/actuator/health']
       interval: 5s
       timeout: 3s
       retries: 20
@@ -37,14 +39,14 @@ services:
     image: prom/prometheus:v2.54.1
     container_name: incident-prometheus
     ports:
-      - "9090:9090"
+      - '9090:9090'
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus-data:/prometheus
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=6h"
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=6h'
     depends_on:
       target-service:
         condition: service_healthy
@@ -54,7 +56,7 @@ services:
     image: prom/alertmanager:v0.27.0
     container_name: incident-alertmanager
     ports:
-      - "9093:9093"
+      - '9093:9093'
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager-data:/alertmanager

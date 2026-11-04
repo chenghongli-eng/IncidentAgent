@@ -6,9 +6,9 @@
       "description": "Full home directory access"
     },
     {
-      "path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main",
+      "path": "/mnt/my-work/incident-lab/workspace",
       "allowReadWrite": true,
-      "description": "Project root — hosts the incident-lab workspace"
+      "description": "Incident-lab workspace — moved out of the repo on 2026-11-04 (see incident/lab-paths.json)"
     }
   ],
   "blockedPatterns": [],

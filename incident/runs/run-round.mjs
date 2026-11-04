@@ -64,7 +64,12 @@ const LAB_ENV =
   process.env.LAB_ENV ?? join(homedir(), '.config/miniclaw-lab/lab.env');
 // 用绝对路径：这几步的 cwd 是 incident/，相对路径会拼成 incident/incident/...
 const FAULTS_MJS = join(ROOT, 'incident/faults/faults.mjs');
-const WORKSPACE = join(LAB, 'workspace');
+// 工作区路径的唯一真相源在 incident/lab-paths.json：工作区 2026-11-04 搬到仓库外，
+// 这里再写死一份就会变成第二处漂移点（漏改一处 = 静默损坏）。
+const LAB_PATHS = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+);
+const WORKSPACE = LAB_PATHS.workspaceRoot;
 const WS_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
 const TARGET = 'http://127.0.0.1:8080';
 const PROM = 'http://127.0.0.1:9090';
@@ -701,12 +706,12 @@ async function main() {
   const mounts = mustSh(
     `docker inspect target-service --format '{{range .Mounts}}{{.Source}}->{{.Destination}} {{end}}'`,
   );
-  if (!mounts.out.includes(join(ROOT, 'incident'))) {
+  if (!mounts.out.includes(WORKSPACE)) {
     fail(
-      `target-service 的挂载源不在当前仓库路径下：${mounts.out}\n搬家后常见静默损坏，先按 RESUME.md 的验收清单修。`,
+      `target-service 的挂载源不在工作区路径下：${mounts.out}\n期望挂载源 = ${WORKSPACE}/logs（工作区 2026-11-04 已搬到仓库外，见 incident/lab-paths.json）。`,
     );
   }
-  record('P2', true, `挂载源指向当前仓库：${mounts.out}`);
+  record('P2', true, `挂载源指向工作区：${mounts.out}`);
 
   // 日志文件必须真的在增长——容器 healthy 但日志文件不增长是搬家的静默损坏之一
   const appLog = join(WORKSPACE, 'logs/app.log');
