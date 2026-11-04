@@ -2234,3 +2234,83 @@ Agent 看到的是一条只动 `tools/` 的普通修复提交。
 > 原样保留；102 的「一处时间差算错 + 三处过度声称 + 取证环境残留提示」也一字未减。
 > 精简版删掉的只是**同义重复**（如「（代码与镜像未动）」）和**过程描述**（如轮次时间戳）。
 > 逐条删了什么，记在台账的 `compact_dropped` 里。
+
+## 【2026-11-04】L2 落地 + 两道闸门缺口补上；F4 × deepseek 等授权
+
+### 一、L2：`metrics range` 不得跑到未来（机制落在工具里，不是 help 文本里）
+
+复核件 `runs/audit-2026-11-03T0324Z.md` §4 的 L2 建议是「在 help 里写明 end 不得晚于执行时刻」。
+本轮没有照抄这条建议，理由是：**help 文本是一句提示，而 Agent 已经读过 help 仍然发了那次查询**——
+把边界写进提示，等于把边界交给对方的自觉。改成工具自己拒绝：
+
+- `incident/tools/incident-readonly.mjs`：`end` 晚于当前时刻 → 拒绝（exit 1）；
+  `start > end` → 拒绝；时间戳解析不了 → 拒绝。报错里写清**为什么**未来窗口会出伪影：
+  Prometheus 对未来的步点不是回「无数据」，而是用**截断的窗口**去算，比值退化成 1/10、1/12 这类小整数比。
+  （0324Z 那份报告里的 9.9% 就是这么来的：真实全窗最大 8.917%。）
+- 工具 help 与 Agent profile 的 `tools_prompt` 同时写上这条约束，让拒绝**自解释**，
+  而不是让 Agent 以为工具坏了；profile 已同步进库（version 7 → 8）。
+- 服务仓库新增提交 `34b43c8`（只动 `tools/incident-readonly.mjs`，提交日期 = 文件真实写作时间
+  `2026-11-04T10:56:33+08:00`）。
+- 负对照 `incident/runs/metrics-range-control.mjs`：4 条必须拒 + 1 条必须放行
+  （闸门不能靠「什么都拒」来过）→ **5/5**。
+
+> ⚠️ **这个提交会影响下一轮**：F4 的 P8 闸门要求服务仓库 HEAD 距开跑时刻 ≥ 15 分钟。
+> 提交后立刻 dry-run 已被 P8 拦下并给出等待时间——**闸门按预期生效**。
+
+### 二、P12：provider 连不通就不开跑
+
+`run-round.mjs` 新增前置闸门 **P12**：跑 `scripts/test-real-model-smoke.ts`，
+provider 没拿到完整回复就**不开跑**。
+
+依据是 11-02 的两次白等：0802Z 在最后一刻才发现 provider 不通，1000Z 在轮次中途才发现（429），
+两次其他闸门全绿——也就是说「闸门全过」当时**不代表模型会回话**。
+以前这件事靠人肉跑一次 `npm run test:real-model` 并记得看结果，现在是机器的一部分。
+
+代价写清楚：这是一次**真实请求**（会产生真实费用），换来的是「不白等一轮」。
+脚本只吐布尔值（providerConfigured / completed / exactMatch / elapsedMs），不吐 endpoint、模型名、凭据、回复原文。
+
+> ⚠️ **本会话未验证 P12 的正路径**：真实 provider 请求需要授权。
+> 负路径是确定的（provider 不通 → 闸门 abort），正路径要等授权后跑一次 dry-run 才算数。
+
+### 三、leak-scan 缺口 ①：软删条目以前根本不在扫描面里
+
+`listWorkspaceMemory` 只返回 `status='active'` 的条目，而底座的 `forget` 只把 status 置成
+`'deleted'`、**正文原样留在表里**——所以「扫不到」不等于「不在」。
+以前这一层靠 `memory-de-leak.mjs` 的 `scrubTombstone` 兜底，那是流程约定，不是闸门。
+现在工作区记忆面直查 `workspace_memory_items`，不按 status 过滤，软删/被取代/冲突的一起扫。
+
+负对照 `leak-scan-control.mjs` 加 **E 用例**：一条 `status='deleted'` 的记忆带着答案 → 必须命中 →
+**5/5**。（这条用例要是哪天又变回 exit 0，说明缺口 ① 回来了，而且没人发现。）
+
+### 四、环境状态（交班时）
+
+- **默认 provider 已切到 deepseek**（`deepseek-v4-flash[1m]`）：minimax 仍 enabled 但不作默认，
+  因为它的 smoke 是 `completed:false`（额度不通）。
+  ⚠️ 换 provider 就换了模型队列——deepseek 队列目前只有 F2 `0324Z` 一轮，
+  **F4 对照组还没在 deepseek 队列里跑过**，所以「F2 与 F4 同一 rubric 下对照」目前还差一轮。
+- Miniclaw 服务已起（3000 在听，3000 之前是空的）；三个实验台容器 Up。
+- leak-scan 现在报 **2 处命中**（上一轮的聊天历史 + Pi 会话记录）——这是**预期的**：
+  runner 的 clear-history 步骤会先清掉它们再重跑扫描。
+
+### 五、L1 的分析（**未执行**，结论待定）
+
+复核件的 L1 建议是「把真值与 `faults/` 挪出 `incident/` 树（scorer 用绝对路径指过去）」。
+本轮先做了可达性分析，发现**照字面执行只能解决一半**：
+
+1. Agent 的 cwd 是 `incident/workspace`，祖先目录里就有整个仓库。**只在仓库内部挪位置**，
+   Agent 仍然可以 `../..` 找到；同理，**外仓的 git 历史里也留着旧副本**——
+   文件挪走了，`git show HEAD~n:incident/runs/ground-truth/F2.json` 还是拿得到。
+   （服务仓库那边正是因此做过一次完整的历史重建，见 `rebuild-service-history.mjs`。）
+2. 同故障类的**历史轮次报告**（`incident/runs/agent-report-*.md`）同样在可达范围内，
+   而 0324Z 那轮 Agent 已经在一次 `find` 里把 11 份历史文件的名字列全了（其中 5 份是 F2 族）。
+   审计把「读答案键的内容」判为污染、「只列目录名」判为越界——这条线现在只靠通道审计兜。
+
+所以 L1 有三条互斥量级的路，选哪条要人拍板：
+
+| 方案 | 效果 | 代价 |
+| --- | --- | --- |
+| A. 工作区整体挪出仓库 | 仓库（含真值、faults、历史报告）整体不在 cwd 的祖先链上 | docker 挂载、`custom_cwd`、mount allowlist、`identity.json` 的 LAB 路径、run-round 的 WORKSPACE、P2 挂载检查全要改；**未来轮次的路径脱敏约定要另立** |
+| B. 只挪真值与 faults + 重写外仓历史 | 真值彻底不可达 | 外仓 32 个提交的 SHA 全部要重映射（审计件引用了三个 SHA）；风险高于收益 |
+| C. 维持现状 | 无 | 边界只靠「Agent 自觉」+ 通道审计事后判污染 |
+
+在拍板之前，**这一轮不做任何挪动**——动一半比不动更糟（会让人以为边界已经成立）。
