@@ -16,6 +16,9 @@
  *   F 工作区仍在仓库内            → 违规（命中）
  *   G 提示词含仓库根路径          → 违规（命中）
  *   H 提示词含旋钮目录            → 违规（命中）
+ *   I 上 1 层有归档 bundle         → 违规（命中，W4）
+ *   J 上 2 层有 injections.log      → 违规（命中，W4）
+ *   K 上 1 层有 archive 目录       → 违规（命中，W4）
  *
  * 用法：node incident/runs/gate-w-control.mjs
  */
@@ -190,6 +193,62 @@ try {
     check(
       'H 提示词含旋钮目录 → 违规',
       v.some((x) => x.includes('旋钮文件目录')),
+      v.join(' | ') || '没抓到',
+    );
+  }
+  // I 上 1 层有归档 bundle（服务仓库旧历史）
+  {
+    const repo = join(tmp, 'I/repo');
+    const ws = join(tmp, 'I/outside/ws');
+    mkdirSync(ws, { recursive: true });
+    mkdirSync(repo, { recursive: true });
+    write(join(tmp, 'I/outside'), 'round-f2-0324z.bundle', 'x');
+    const v = checkIsolation({
+      workspaceRoot: ws,
+      repoRoot: repo,
+      identity: cleanIdentity(ws),
+    });
+    check(
+      'I 上 1 层有归档 bundle → 违规（W4）',
+      v.some((x) => x.includes('bundle')),
+      v.join(' | ') || '没抓到',
+    );
+  }
+
+  // J 上 2 层有注入台账
+  {
+    const repo = join(tmp, 'J/repo');
+    const ws = join(tmp, 'J/outside/ws');
+    mkdirSync(ws, { recursive: true });
+    mkdirSync(repo, { recursive: true });
+    write(join(tmp, 'J'), 'injections.log', 'x');
+    const v = checkIsolation({
+      workspaceRoot: ws,
+      repoRoot: repo,
+      identity: cleanIdentity(ws),
+    });
+    check(
+      'J 上 2 层有 injections.log → 违规（W4）',
+      v.some((x) => x.includes('injections.log')),
+      v.join(' | ') || '没抓到',
+    );
+  }
+
+  // K 上 1 层有 archive 目录（空的也算：目录名本身就是信号）
+  {
+    const repo = join(tmp, 'K/repo');
+    const ws = join(tmp, 'K/outside/ws');
+    mkdirSync(ws, { recursive: true });
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(join(tmp, 'K/outside/archive'), { recursive: true });
+    const v = checkIsolation({
+      workspaceRoot: ws,
+      repoRoot: repo,
+      identity: cleanIdentity(ws),
+    });
+    check(
+      'K 上 1 层有 archive 目录 → 违规（W4）',
+      v.some((x) => x.includes('实验室记录目录')),
       v.join(' | ') || '没抓到',
     );
   }

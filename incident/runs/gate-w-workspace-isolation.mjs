@@ -19,7 +19,9 @@
  *   W1 工作区根往上 2 层（含自己）以内，任何目录的条目里都不出现答案键文件；
  *   W2 工作区提示词（identity.json 四段）里不含仓库根路径，也不含旋钮目录；
  *   W3 仓库里的旧工作区路径 `incident/workspace` 已经不存在，且仓库根
- *      不在工作区根的祖先链上。
+ *      不在工作区根的祖先链上；
+ *   W4 工作区根往上 2 层以内不出现实验室自己的记录（归档 bundle、注入台账）——
+ *      这些文件里装着服务仓库的旧历史，也就是旧注入提交。
  *
  * 用法：node incident/runs/gate-w-workspace-isolation.mjs
  * 退出码：0 = 不变量成立；1 = 有违规项（逐条打印）。
@@ -56,6 +58,24 @@ const ANSWER_KEY_DIRS = [
 /** 答案键的文件名（出现在任何被扫目录的条目里都算违规）。 */
 const ANSWER_KEY_FILES = ['RESUME.md'];
 
+/**
+ * 实验室自己的记录：归档 bundle、注入台账、轮次原件压缩包。
+ *
+ * 为什么它们也算「答案键邻接」：这些文件里装着**服务仓库的旧历史**——
+ * 上一轮的注入提交就在 bundle 里。放到工作区隔壁，Agent 一次 `ls ..`
+ * 就能看到目录名，再 `git clone` 一下就把旧缺陷 diff 拿走了。
+ * 仓库外不等于邻域外：闸门查的是「工作区往上 2 层」，
+ * 所以归档必须落在 home 这种**另一棵树**里（见 incident/lab-paths.json）。
+ */
+const LAB_RECORD_FILES = [
+  { file: /\.bundle$/, why: '服务仓库历史归档 bundle（含旧注入提交）' },
+  { file: /^injections\.log$/, why: '注入台账（记录注入过什么、什么时候）' },
+  { file: /\.tgz$/, why: '轮次原件压缩包' },
+];
+
+/** 实验室记录目录名：出现在邻域里就算违规（哪怕里面当前是空的）。 */
+const LAB_RECORD_DIRS = ['archive', 'incident-lab-archive', 'pre-commit-raw'];
+
 /** 工作区提示词里不许出现的路径片段：仓库根 = 答案键所在树；旋钮目录 = 绕过通道取生效值。 */
 const FORBIDDEN_IN_PROMPT = [
   { token: 'miniclaw-main/miniclaw-main', why: '仓库根路径：答案键所在树' },
@@ -91,6 +111,11 @@ function scanDir(dir, label, violations) {
       if (ANSWER_KEY_FILES.includes(e.name)) {
         violations.push(`${label} 下的 ${e.name}：答案键台账`);
       }
+      for (const rule of LAB_RECORD_FILES) {
+        if (rule.file.test(e.name)) {
+          violations.push(`${label} 下的 ${e.name}：${rule.why}`);
+        }
+      }
       for (const rule of ANSWER_KEY_DIRS) {
         if (rule.file.test(e.name) && rule.dir === 'runs') {
           violations.push(`${label} 下的 ${e.name}：${rule.why}`);
@@ -99,6 +124,12 @@ function scanDir(dir, label, violations) {
       continue;
     }
     if (!e.isDirectory()) continue;
+    if (LAB_RECORD_DIRS.includes(e.name)) {
+      violations.push(
+        `${label} 下的 ${e.name}/：实验室记录目录（归档 / 台账）`,
+      );
+      continue;
+    }
     const rule = ANSWER_KEY_DIRS.find((r) => r.dir === e.name);
     if (!rule) continue;
     let children = [];
@@ -210,6 +241,9 @@ function main() {
   console.log('✓ W1 工作区根往上 2 层没有答案键文件');
   console.log('✓ W2 identity.json 四段提示词不含仓库根路径 / 旋钮目录');
   console.log('✓ W3 仓库内旧工作区路径已清空，仓库根不在工作区祖先链上');
+  console.log(
+    '✓ W4 工作区往上 2 层没有实验室记录（bundle / injections.log / 归档目录）',
+  );
   console.log(
     '\n口径提醒：本闸门保证的是「不相邻」，不是「不可达」——\n' +
       '  外仓 git 历史里的旧副本、家目录、以及无沙箱的 Bash 工具仍然可达。',

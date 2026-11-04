@@ -1,9 +1,9 @@
 {
-  "$comment": "实验室路径唯一真相源。2026-11-04 起 Agent 的工作区不再放在仓库里（见 incident/L1-WORKSPACE-MOVE.md）：工作区与答案键不再相邻，闸门 W 守着这条不变量。要搬工作区，改这一个文件 + 重跑 sync-agent-profile.mjs + lab.sh up -d --build。",
+  "$comment": "实验室路径唯一真相源。2026-11-04 起 Agent 的工作区不再放在仓库里（见 incident/L1-WORKSPACE-MOVE.md）：工作区与答案键不再相邻，闸门 W 守着这条不变量。要搬工作区，改这一个文件 + 重跑 sync-agent-profile.mjs + lab.sh up -d --build。archiveDir 放在 home：它在仓库外，也在工作区的邻域外（工作区往上 2 层里不能出现 bundle / injections.log 这类实验室记录，闸门 W 的 W4 查这一条）。",
   "workspaceRoot": "/mnt/my-work/incident-lab/workspace",
   "serviceDir": "/mnt/my-work/incident-lab/workspace/target-service",
   "readonlyCli": "/mnt/my-work/incident-lab/workspace/tools/incident-readonly.mjs",
   "logsDir": "/mnt/my-work/incident-lab/workspace/logs",
-  "archiveDir": "/mnt/my-work/incident-lab/archive",
+  "archiveDir": "/home/fs-user/incident-lab-archive",
   "repoRoot": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main"
 }

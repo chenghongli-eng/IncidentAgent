@@ -11,6 +11,13 @@
 incident/runs/agent-report-*.md
 incident/runs/round-manifest-*.json
 incident/runs/score-*.json
+incident/runs/control-arms-*.json
+
+# 判据快照是**某个版本的判据原件的归档**：它要和当初那份逐字相同，
+# 才能证明「当时用的就是这套判据」。prettier 会把数组压成一行，
+# 于是每跑一次 format:changed，快照就和它来源的那份 live 判据长得不一样，
+# 归档件被反复改写——归档件一旦被格式化，就不再是原件了。
+incident/runs/rubric-snapshots/**/*.json
 
 # 锁文件由包管理器生成，格式属于工具链的职责。
 #
