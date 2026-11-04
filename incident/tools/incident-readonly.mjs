@@ -13,8 +13,11 @@ import { join, relative } from 'node:path';
 
 const PROMETHEUS = process.env.PROMETHEUS_URL ?? 'http://127.0.0.1:9090';
 const TARGET = process.env.TARGET_URL ?? 'http://127.0.0.1:8080';
-const LOG_DIR = process.env.LOG_DIR ?? new URL('../logs/', import.meta.url).pathname;
-const REPO = process.env.TARGET_REPO ?? new URL('../target-service/', import.meta.url).pathname;
+const LOG_DIR =
+  process.env.LOG_DIR ?? new URL('../logs/', import.meta.url).pathname;
+const REPO =
+  process.env.TARGET_REPO ??
+  new URL('../target-service/', import.meta.url).pathname;
 const CONTAINER = process.env.TARGET_CONTAINER ?? 'target-service';
 
 // The knob file holds the runtime settings the lab applies on container
@@ -51,7 +54,12 @@ const usage = `incident-readonly <channel> [options]
 
 channels (all read-only):
   metrics query   <promql>                  instant query against Prometheus
-  metrics range   <promql> <start> <end> <step>   range query
+  metrics range   <promql> <start> <end> <step>   range query over a window that has
+                                                      already closed -- the end must NOT be
+                                                      later than the current time:
+                                                      steps past now are computed by
+                                                      Prometheus from truncated windows and
+                                                      come back as artifacts, not observations
   metrics alerts                               currently firing alerts
   metrics targets                              scrape target health
   logs   grep    <pattern> [--since ISO] [--until ISO] [--limit N] [--count]
@@ -68,6 +76,23 @@ channels (all read-only):
 function die(msg) {
   process.stderr.write(`${msg}\n`);
   process.exit(1);
+}
+
+// Prometheus answers a range query by stepping from `start` to `end`. A step
+// that lands past the current time is not "no data" -- Prometheus evaluates it
+// against a window it does not have yet, so the ratio collapses to whatever
+// the truncated window yields (1/10, 1/12, ...) and reads like a plausible
+// observation. A round once asked for a range that ran 3 minutes into the
+// future and reported a 9.9% 5xx spike that never happened; the true maximum
+// was 8.917%. The boundary is enforced here rather than described in the help
+// text, because a prompt-level rule is exactly what the agent ignored.
+function parseTime(value) {
+  if (/^-?\d+(\.\d+)?$/.test(value)) {
+    const n = Number(value);
+    return n > 1e12 ? n : n * 1000;
+  }
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? NaN : ms;
 }
 
 async function prom(path, params = {}) {
@@ -112,13 +137,15 @@ function parseLogTimestamp(text) {
 
 function logFiles() {
   try {
-    return readdirSync(LOG_DIR)
-      // "app.log" is the live file; "app.log.<date>.<n>[.gz]" are rotated
-      // archives. Both are evidence -- an agent that can only see the live
-      // file cannot prove what happened before the last restart.
-      .filter((f) => f.endsWith('.log') || f.startsWith('app.log.'))
-      .sort()
-      .map((f) => join(LOG_DIR, f));
+    return (
+      readdirSync(LOG_DIR)
+        // "app.log" is the live file; "app.log.<date>.<n>[.gz]" are rotated
+        // archives. Both are evidence -- an agent that can only see the live
+        // file cannot prove what happened before the last restart.
+        .filter((f) => f.endsWith('.log') || f.startsWith('app.log.'))
+        .sort()
+        .map((f) => join(LOG_DIR, f))
+    );
   } catch {
     die(`no log directory at ${LOG_DIR}`);
   }
@@ -152,7 +179,28 @@ async function main() {
       }
       if (op === 'range') {
         const [promql, start, end, step = '15s'] = args;
-        if (!promql || !start || !end) die('usage: metrics range <promql> <start> <end> [step]');
+        if (!promql || !start || !end)
+          die('usage: metrics range <promql> <start> <end> [step]');
+        const startMs = parseTime(start);
+        if (Number.isNaN(startMs))
+          die(
+            `metrics range: cannot parse start "${start}" (use RFC3339 or unix seconds)`,
+          );
+        const endMs = parseTime(end);
+        if (Number.isNaN(endMs))
+          die(
+            `metrics range: cannot parse end "${end}" (use RFC3339 or unix seconds)`,
+          );
+        const now = Date.now();
+        if (endMs > now) {
+          die(
+            `metrics range: end (${end}) is later than the current time (${new Date(now).toISOString()}). ` +
+              'A range that runs into the future returns values Prometheus computed from truncated ' +
+              'windows; they are artifacts, not observations. Query a window that has already closed.',
+          );
+        }
+        if (startMs > endMs)
+          die(`metrics range: start (${start}) is later than end (${end})`);
         const out = await prom('/api/v1/query_range', {
           query: promql,
           start,
@@ -168,7 +216,9 @@ async function main() {
       }
       if (op === 'targets') {
         const out = await prom('/api/v1/targets');
-        return void console.log(JSON.stringify(out.data.activeTargets, null, 2));
+        return void console.log(
+          JSON.stringify(out.data.activeTargets, null, 2),
+        );
       }
       return die(`unknown metrics op: ${op}`);
     }
@@ -176,15 +226,20 @@ async function main() {
     case 'logs': {
       const op = args.shift();
       const pattern = args.shift();
-      if (!pattern) die('usage: logs <grep|first> <pattern> [--since ISO] [--until ISO] [--limit N] [--count]');
+      if (!pattern)
+        die(
+          'usage: logs <grep|first> <pattern> [--since ISO] [--until ISO] [--limit N] [--count]',
+        );
       const since = flag('since');
       const until = flag('until');
       const count = args.includes('--count');
       const limit = Number(flag('limit', op === 'first' ? '1' : '50'));
       const sinceMs = since ? Date.parse(since) : Number.NEGATIVE_INFINITY;
       const untilMs = until ? Date.parse(until) : Number.POSITIVE_INFINITY;
-      if (Number.isNaN(sinceMs)) die(`--since is not a valid timestamp: ${since}`);
-      if (Number.isNaN(untilMs)) die(`--until is not a valid timestamp: ${until}`);
+      if (Number.isNaN(sinceMs))
+        die(`--since is not a valid timestamp: ${since}`);
+      if (Number.isNaN(untilMs))
+        die(`--until is not a valid timestamp: ${until}`);
 
       let lines = logFiles().flatMap((file) =>
         readLogText(file)
@@ -192,7 +247,9 @@ async function main() {
           .filter(Boolean)
           .map((text) => ({ text, ts: parseLogTimestamp(text) })),
       );
-      lines = lines.filter((l) => l.ts >= sinceMs && l.ts <= untilMs && l.text.includes(pattern));
+      lines = lines.filter(
+        (l) => l.ts >= sinceMs && l.ts <= untilMs && l.text.includes(pattern),
+      );
       lines.sort((a, b) => a.ts - b.ts);
       if (count) {
         return void console.log(String(lines.length));
@@ -217,7 +274,9 @@ async function main() {
           .split('\n')
           .map((line) => {
             const m = line.match(/^(\S+)\t(\S+?)(?:[+-]\d{2}:\d{2}|Z)\t(.*)$/);
-            return m ? `${m[1]}\t${new Date(m[2]).toISOString()}\t${m[3]}` : line;
+            return m
+              ? `${m[1]}\t${new Date(m[2]).toISOString()}\t${m[3]}`
+              : line;
           })
           .join('\n');
 
@@ -246,7 +305,8 @@ async function main() {
         const spec = args.shift();
         if (!spec) die('usage: git file <ref>:<path>');
         const sep = spec.indexOf(':');
-        if (sep === -1) die(`expected <ref>:<path>, got ${JSON.stringify(spec)}`);
+        if (sep === -1)
+          die(`expected <ref>:<path>, got ${JSON.stringify(spec)}`);
         const ref = spec.slice(0, sep);
         const path = spec.slice(sep + 1);
         // The service lives in a subdirectory of the repository, so the path
@@ -271,7 +331,10 @@ async function main() {
       const endpoint = (args.shift() ?? 'health').replace(/^\/+/, '');
       const res = await fetch(`${TARGET}/actuator/${endpoint}`);
       const body = await res.text();
-      if (!res.ok) die(`actuator ${endpoint} returned ${res.status}: ${body.slice(0, 400)}`);
+      if (!res.ok)
+        die(
+          `actuator ${endpoint} returned ${res.status}: ${body.slice(0, 400)}`,
+        );
       return void console.log(body);
     }
 
@@ -279,11 +342,17 @@ async function main() {
       const op = args.shift();
       const inspect = (format) => {
         try {
-          return execFileSync('docker', ['inspect', CONTAINER, '--format', format], {
-            encoding: 'utf8',
-          }).trim();
+          return execFileSync(
+            'docker',
+            ['inspect', CONTAINER, '--format', format],
+            {
+              encoding: 'utf8',
+            },
+          ).trim();
         } catch (err) {
-          die(`docker inspect ${CONTAINER} failed: ${err.stderr ?? err.message}`);
+          die(
+            `docker inspect ${CONTAINER} failed: ${err.stderr ?? err.message}`,
+          );
         }
       };
       const latestLogLine = (pattern) => {
@@ -306,7 +375,9 @@ async function main() {
             .filter(Boolean)
             .map((line) => {
               const i = line.indexOf('=');
-              return i === -1 ? [line, ''] : [line.slice(0, i), line.slice(i + 1)];
+              return i === -1
+                ? [line, '']
+                : [line.slice(0, i), line.slice(i + 1)];
             }),
         );
         console.log(`container: ${CONTAINER}`);
