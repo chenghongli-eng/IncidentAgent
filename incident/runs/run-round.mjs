@@ -56,6 +56,15 @@ import { fileURLToPath } from 'node:url';
 const { scoreReport } = await import(
   new URL('./score-report.mjs', import.meta.url).href
 );
+const { buildLocalEntry } = await import(
+  new URL('../collector/collect-local.mjs', import.meta.url).href
+);
+const { readRunningImage } = await import(
+  new URL('../collector/local-image.mjs', import.meta.url).href
+);
+const { writeEntries } = await import(
+  new URL('../collector/ledger.mjs', import.meta.url).href
+);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const LAB = join(ROOT, 'incident');
@@ -70,6 +79,19 @@ const LAB_PATHS = JSON.parse(
   readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
 );
 const WORKSPACE = LAB_PATHS.workspaceRoot;
+/**
+ * 夹具自己的部署台账。
+ *
+ * 合成夹具每跑一轮就是一次发布（重建镜像 + 重建容器），但它从没被推到任何镜像库，
+ * 所以采集真实靶子的 registry 段看不见它——台账因此一直是空的，而
+ * 「台账里没有这一条」和「这一轮没有发布」是相反的结论。夹具要自己写台账。
+ *
+ * 路径同样在 lab-paths.json 里（唯一真相源），放在 archiveDir 下：
+ * 它不在工作区的邻域里（闸门 W 查的就是那条），也不在仓库里。
+ * 与真实靶子的台账（ledger.jsonl）分成两个文件：不同靶子的记录混在一个文件里，
+ * 「这一轮发布了什么」就变成一个跨靶子的问题了。
+ */
+const FIXTURE_LEDGER = LAB_PATHS.fixtureLedger;
 const WS_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
 const TARGET = 'http://127.0.0.1:8080';
 const PROM = 'http://127.0.0.1:9090';
@@ -257,6 +279,7 @@ function digAgentApiErrors(agentStartIso) {
 const manifest = {
   stamp: STAMP,
   fault: FAULT,
+  dry_run: false,
   started_at: now.toISOString(),
   preflight: [],
   setup: null,
@@ -267,6 +290,8 @@ const manifest = {
   channel_audit: null,
   restore: null,
   score: null,
+  deploy_ledger: { ledger: FIXTURE_LEDGER, entries: [] },
+  provider_probes: [],
   round_valid: true,
   invalid_reason: null,
   manifest_path: MANIFEST_PATH,
@@ -276,6 +301,74 @@ function record(id, ok, detail) {
   manifest.preflight.push({ id, ok, detail });
   log(`  [${ok ? 'PASS' : 'FAIL'}] ${id} ${detail}`);
   return ok;
+}
+
+/**
+ * 跑一次轮次规模的 provider 探测。
+ *
+ * 探测体是合成的，量级取自上一轮真实的 transcript，所以它问的是
+ * 「provider 接不接得住一轮的上下文」，而不是「provider 活着吗」。
+ *
+ * 它**不能**证明「额度够跑完整轮」——provider 没有额度查询接口
+ * （/key/info、/health、/model/info 全部 401，实测过）。所以结论只到
+ * 「这个规模下通」为止；整轮能不能跑完，靠开跑前再探一次，
+ * 以及跑完后回查 transcript 里的额度类错误。
+ */
+function runProviderProbe(id) {
+  const at = new Date().toISOString();
+  const r = sh(
+    `${NODE} node_modules/tsx/dist/cli.mjs incident/runs/provider-probe.ts`,
+    { timeout: 300000 },
+  );
+  let measured = null;
+  try {
+    measured = JSON.parse(r.out);
+  } catch {
+    measured = null;
+  }
+  const ok = Boolean(measured && measured.completed === true);
+  const detail = {
+    id,
+    at,
+    ok,
+    exit: r.code,
+    measured,
+    stderr_tail: (r.err || '').slice(-300),
+  };
+  manifest.provider_probes.push(detail);
+  return detail;
+}
+
+/**
+ * 探针失败时的报错文本。**先分清是谁的锅，再说规模。**
+ *
+ * `probe_output_truncated` 是探针自己的 `max_tokens` 被 thinking 吃光了，
+ * 不是 provider 接不住——2026-11-06 实测过这一档：`max_tokens=64` 时模型
+ * 思考用掉 ~225 token，回复里没有标记，探针就报 `payload_not_echoed`，
+ * 把一个完全接得住的轮次拦了下来。这种假阴性必须显式说成「探针自身」的问题，
+ * 否则下一轮又会照同一个形状误判。
+ */
+function probeFailureMessage(id, m, run) {
+  const size =
+    `  探测规模：${m.payload_bytes ?? '?'} 字节` +
+    `（约 ${m.approx_input_tokens ?? '?'} token，基准：${m.reference_round_source ?? '?'}）\n`;
+  const tail = `  退出码 ${run.exit}；stderr：${run.stderr_tail || '（无）'}\n`;
+  if (m.failure_class === 'probe_output_truncated') {
+    return (
+      `${id} 探针自己的输出预算用完了（stop_reason=max_tokens）——**不是 provider 的问题**。\n` +
+      size +
+      tail +
+      '  这是探针的假阴性：模型的思考 token 吃掉了 max_tokens，回复里没来得及回显标记。\n' +
+      '  先把 provider-probe.ts 的 max_tokens 调大再重跑，不要当成额度故障。'
+    );
+  }
+  return (
+    `${id}：provider 接不住一轮规模的请求（可能是额度/限流）。\n` +
+    `  失败分类：${m.failure_class ?? '(没拿到分类)'}\n` +
+    size +
+    tail +
+    '  这是环境的问题（额度/限流），不是 Agent 的问题——别记到它头上。\n'
+  );
 }
 
 /**
@@ -294,24 +387,6 @@ function invalidate(reason) {
 
 function fail(msg) {
   throw new Error(msg);
-}
-
-/**
- * 从 smoke 脚本的 stdout 里挑出那段 JSON。
- *
- * 为什么要单独解析而不是直接 JSON.parse：脚本只打印一段 JSON，但 tsx 可能带上别的行。
- * 切不出来就返回 null——闸门必须能区分「脚本没输出」和「输出了但没完成」，
- * 不能在两者之间猜一个。
- */
-function parseSmokeJson(out) {
-  const start = out.indexOf('{');
-  const end = out.lastIndexOf('}');
-  if (start === -1 || end <= start) return null;
-  try {
-    return JSON.parse(out.slice(start, end + 1));
-  } catch {
-    return null;
-  }
 }
 
 // ── 旋钮文件 ──────────────────────────────────────────────────────────────
@@ -392,6 +467,106 @@ async function recreate() {
   mustSh('./lab.sh recreate target-service', { cwd: LAB });
   if (!(await waitContainerHealthy()))
     fail('target-service 重建后没有变 healthy。');
+}
+
+/**
+ * 写一条发布记录到夹具自己的台账。
+ *
+ * 每一次「重建镜像 / 重建容器」之后都要写。合成夹具每轮都是一次发布，
+ * 而它从没被推到镜像库，采集真实靶子的 registry 段看不见它——台账因此一直是空的。
+ * 台账空着的时候，Agent 问「现在跑的是哪次发布」，读到的答案是
+ * 「台账缺条目：没查到」，而不是「这一轮发布过」。这两个结论相反。
+ *
+ * 这一条同时解决「宿主进程形态的靶子没有 digest 主键」在夹具侧的问题：
+ * digest 用本地镜像 id（docker 的内容哈希，和镜像库 digest 同一类身份）。
+ */
+function recordDeployment(phase, { soft = false } = {}) {
+  const abort = (msg) => {
+    if (soft) {
+      invalidate(msg);
+      log(`  ⚠ ${msg}`);
+      return null;
+    }
+    fail(msg);
+  };
+  let running;
+  try {
+    running = readRunningImage('target-service');
+  } catch (err) {
+    abort(
+      `读不到本地镜像/容器事实，写不了发布记录：${err.message}\n` +
+        '  采集失败不能被当成「这一轮没有发布」——那是相反的结论。',
+    );
+    return null;
+  }
+  const entry = buildLocalEntry({
+    image: running,
+    container: {
+      container: 'target-service',
+      started_at: running.container_started_at,
+      running: running.running,
+    },
+    observedAt: new Date().toISOString(),
+    cluster: 'lab-local',
+    workload: 'target-service',
+    deployedBy: 'incident-lab',
+  });
+  mkdirSync(dirname(FIXTURE_LEDGER), { recursive: true });
+  const res = writeEntries(FIXTURE_LEDGER, [entry]);
+  if (res.conflicts.length > 0) {
+    abort(
+      `台账冲突：同一个 digest 出现互斥的记录：${JSON.stringify(res.conflicts)}`,
+    );
+    return null;
+  }
+  manifest.deploy_ledger.entries.push({
+    phase,
+    digest: entry.digest,
+    image_ref: entry.image_ref,
+    commit: entry.commit,
+    commit_source: entry.commit_source,
+    built_at: entry.built_at,
+    pod_started_at: entry.pod_started_at,
+    appended: res.appended.length,
+    skipped: res.skipped.length,
+    superseded: res.superseded.length,
+  });
+  log(
+    `  已写发布记录（${phase}）：${entry.digest} commit=${entry.commit ?? '(镜像没自述 commit)'} 起于 ${entry.pod_started_at}`,
+  );
+  return entry;
+}
+
+/**
+ * 把台账路径交给 Agent。
+ *
+ * Agent 读得到台账文件，读不到 docker socket——采集在它的够不着的地方，
+ * 读侧只读文件。路径写进该工作区的容器环境配置，host 模式下 runner 每次
+ * 运行都会把它注入 Agent 的 shell 环境。
+ */
+function publishLedgerEnv(folder) {
+  const file = join(ROOT, 'data', 'config', 'container-env', `${folder}.json`);
+  let cfg = {};
+  if (existsSync(file)) {
+    try {
+      cfg = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (err) {
+      fail(`工作区环境配置文件读不出来：${file}（${err.message}）`);
+    }
+  }
+  const customEnv = {
+    ...(cfg.customEnv ?? {}),
+    DEPLOY_LEDGER: FIXTURE_LEDGER,
+  };
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify({ ...cfg, customEnv }, null, 2)}\n`);
+  // 台账文件先建出来（可以是空的）：Agent 问「现在跑的是哪次发布」时，
+  // 拿到的是「台账里没有这一条」——**没查到**；而不是「文件不存在」这种崩溃。
+  // 这两种都还算「没查到」，但前者能继续问下去。
+  mkdirSync(dirname(FIXTURE_LEDGER), { recursive: true });
+  if (!existsSync(FIXTURE_LEDGER)) writeFileSync(FIXTURE_LEDGER, '');
+  log(`  台账路径已交给 Agent：DEPLOY_LEDGER=${FIXTURE_LEDGER}`);
+  return file;
 }
 
 // ── 故障规格 ──────────────────────────────────────────────────────────────
@@ -819,6 +994,11 @@ async function main() {
     `工作区就位（custom_cwd=${grp.custom_cwd}，folder=${grp.folder}）`,
   );
 
+  // 把台账路径交给 Agent（写进该工作区的容器环境配置）。
+  // 不做这一步，Agent 的 deploy 通道就会因为「没有配置台账」直接死掉，
+  // 它连「没查到」都拿不到——那一轮对发布归因就是没有证据。
+  publishLedgerEnv(grp.folder);
+
   // P11：Miniclaw 服务本身在线。
   // runner 不负责起服务，只假设 3000 端口上有东西在听；而 mc-auth.mjs 只读 DB 造 cookie，
   // 不碰网络——所以「拿到 cookie」不等于「服务在跑」。0802Z 就是漏了这一条。
@@ -831,37 +1011,52 @@ async function main() {
   }
   record('P11', true, `Miniclaw 服务在线（${probe.why}）`);
 
-  // P12：provider 真的能回话——也就是额度到底恢复了没有。
+  // P12：provider 接不接得住**一轮的规模**。
   //
-  // 11-02 有两轮撞在这个上面：0802Z 跑到最后一刻才发现，1000Z 在轮次中途才发现
-  // （429），两轮都白等，而闸门当时是全过的。「额度没恢复」这件事在开跑前
-  // 就能测出来，只是那时还是靠人肉跑 `npm run test:real-model` 并记得看结果。
-  // 现在它是闸门的一部分：额度不通就不开跑。
+  // 这一条改过两次语义，两次都是被实测打脸：
   //
-  // 代价要说清楚：这是一次**真实的模型请求**，会产生真实费用。换来的是「不白等一轮」。
-  // 脚本只吐布尔值，不吐 endpoint / 模型名 / 凭据 / 回复原文。
-  const smoke = sh(
-    `${NODE} node_modules/tsx/dist/cli.mjs scripts/test-real-model-smoke.ts`,
-    {
-      timeout: 180000,
-    },
-  );
-  const smokeJson = parseSmokeJson(smoke.out);
-  if (!smokeJson || smokeJson.completed !== true) {
-    fail(
-      'provider 连不通（额度可能没恢复）：`npm run test:real-model` 没拿到完整回复。\n' +
-        `  退出码 ${smoke.code}；stdout：${(smoke.out || '').slice(0, 200)}\n` +
-        '  这一轮不开跑。11-02 的 0802Z / 1000Z 都白等在这里：闸门全过、轮次跑完，\n' +
-        '  最后才发现额度根本不通。',
-    );
+  // 11-02 有两轮撞在额度上（0802Z 跑到最后一刻才发现，1000Z 轮次中途 429），
+  // 当时闸门是全过的——因为闸门问的是「provider 活着吗」，而额度类故障的
+  // 形状是「小请求还通、大请求不通」「开跑时通、跑到一半不通」。
+  //
+  // 11-05 又撞了一次：闸门绿，轮次跑完，最后才发现额度用完了。
+  //
+  // 所以闸门改成问「接不接得住一轮的上下文」，探测规模取自上一轮真实的
+  // transcript 字节数（不是拍脑袋的数），而且**开跑前还要再探一次**（P12b）——
+  // 前置闸门到开跑之间隔着静默期的十几分钟，额度就是在那段时间里死的。
+  //
+  // 它**不能**证明「额度够跑完整轮」：provider 没有额度查询接口
+  // （/key/info、/health、/model/info 全部 401，实测过）。所以这条闸门的
+  // 结论只到「这个规模下通」为止，manifest 里记的是这次探测的测量值。
+  //
+  // 代价要说清楚：这是一次**真实的模型请求**，规模和一轮相当，会产生真实费用。
+  // 换来的是「不白等一轮」。脚本只吐测量值和失败分类，不吐 endpoint /
+  // 模型名 / 凭据 / 回复原文。
+  const p12 = runProviderProbe('P12');
+  if (!p12.ok) {
+    const m = p12.measured ?? {};
+    // 「额度不通」的历史注脚只在**真的**额度/限流时才有意义。
+    // 探针自己截断（probe_output_truncated）时附上它，就把探针的锅
+    // 说成了 provider 的锅——正是这次踩到的那个错归因。
+    const history =
+      m.failure_class === 'probe_output_truncated'
+        ? ''
+        : '  11-02 的 0802Z / 1000Z、11-05 那轮都白等在这里：闸门全过、轮次跑完，\n' +
+          '  最后才发现额度根本不通。';
+    fail(probeFailureMessage('P12', m, p12) + history);
   }
   record(
     'P12',
     true,
-    `provider 连通（${smokeJson.elapsedMs}ms，exactMatch=${smokeJson.exactMatch}）`,
+    `provider 接得住一轮规模（${p12.measured.approx_input_tokens} token / ${p12.measured.elapsed_ms}ms，基准：${p12.measured.reference_round_source}）`,
   );
 
   if (DRY_RUN) {
+    // dry-run 只跑了前置闸门，**不是一轮成绩**。manifest 里必须自己说清楚，
+    // 否则这份文件读起来像「一轮跑完了而且有效」（2026-11-06 的 0910Z 就是
+    // 那样：agent/score 全是 null，round_valid 却是 true）。
+    manifest.dry_run = true;
+    invalidate('dry-run：只跑了前置闸门，没有跑整轮，不是一轮成绩');
     manifest.finished_at = new Date().toISOString();
     writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
     log(`\n--dry-run：前置闸门全过，manifest 落在 ${MANIFEST_PATH}\n`);
@@ -873,6 +1068,9 @@ async function main() {
   // ───────────────────────────────────────────────────────────
   section(`摆静默态（${FAULT}：${spec.title}）`);
   manifest.setup = await spec.setup();
+  // 静默态本身就是一次部署（重建镜像 + 重建容器）。不写这一条，
+  // Agent 在窗口里问「有没有发布」时读到的是空台账。
+  recordDeployment('setup');
   log(`  ${manifest.setup.note ?? '静默态就位'}`);
 
   // ───────────────────────────────────────────────────────────
@@ -896,6 +1094,7 @@ async function main() {
   mustSh(`${NODE} incident/runs/memory-de-leak.mjs`);
   mustSh(`${NODE} incident/runs/sync-skills.mjs`);
   mustSh(`${NODE} incident/runs/sync-agent-profile.mjs`);
+  mustSh(`${NODE} incident/runs/sync-tools.mjs`);
 
   const scan = sh(`${NODE} incident/runs/leak-scan.mjs`);
   if (scan.code !== 0)
@@ -930,6 +1129,10 @@ async function main() {
   log(
     `  已注入：${manifest.injection.changed.join('、')}（${manifest.injection.changed.length} 个维度）`,
   );
+  // 注入这一步对 F2 是「改代码 + 重建」（一次发布），对 F4 是「改旋钮 + 重建」
+  // （容器重启但镜像没变）。两种都写：台账记的是**观测**，不是「发布了几次」，
+  // 读侧按 (digest, 启动时刻) 分桶才知道这是一次还是两次发布。
+  recordDeployment('inject');
 
   // ───────────────────────────────────────────────────────────
   // 5. 等告警 firing
@@ -978,6 +1181,22 @@ async function main() {
         `这一轮不是 Agent 的问题，别记到它头上。`,
     );
   }
+
+  // P12b：开跑前再探一次 provider。
+  //
+  // 前置闸门到开跑之间隔着静默期的十几分钟，额度恰恰就是在那段时间里死的
+  // （11-05 那轮：闸门绿，跑完才发现额度用完）。所以「开跑前那一刻通不通」
+  // 必须单独测一次——前置闸门的结论不能替它作证。
+  const p12b = runProviderProbe('P12b');
+  if (!p12b.ok) {
+    const m = p12b.measured ?? {};
+    fail(probeFailureMessage('P12b', m, p12b) + '  这一轮不开跑。');
+  }
+  record(
+    'P12b',
+    true,
+    `开跑前 provider 仍接得住一轮规模（${p12b.measured.approx_input_tokens} token / ${p12b.measured.elapsed_ms}ms）`,
+  );
 
   writeFileSync('/tmp/mc-cookie.txt', cookie);
   const agentStart = new Date().toISOString();
@@ -1063,6 +1282,28 @@ async function main() {
     log(`  transcript 已收：${dest}`);
   }
 
+  // 跑完后回查 transcript 里的额度类错误。
+  //
+  // 「Agent 出了报告」不等于「这一轮跑完了」：额度可以在跑到一半时耗尽，
+  // 报告照样交上来——只是后半段是编的。11-05 那轮就是这么废的：
+  // 闸门全绿、报告也有，但报告里混着额度耗尽之后的内容。
+  // 这类轮次不能算 Agent 的成绩，也不能算台子的。
+  const postRunErrors = digAgentApiErrors(agentStart);
+  if (postRunErrors.apiErrors?.length) {
+    manifest.agent_api_errors = postRunErrors;
+    const quotaish = postRunErrors.apiErrors.filter((e) =>
+      /429|quota|用量上限|rate.?limit|insufficient|余额/i.test(e.error),
+    );
+    if (quotaish.length) {
+      invalidate(
+        `provider 额度/限流在轮次中途报错（${quotaish.length} 条）：这一轮不是 Agent 的成绩`,
+      );
+      log(
+        `  ⚠ transcript 里有 ${quotaish.length} 条额度类错误，这一轮作废（provider 的账，不是 Agent 的）`,
+      );
+    }
+  }
+
   // ───────────────────────────────────────────────────────────
   // 7. 通道合规审计
   // ───────────────────────────────────────────────────────────
@@ -1146,6 +1387,10 @@ async function main() {
         at: new Date().toISOString(),
         ...(await spec.restore()),
       };
+      // 恢复本身也是一次容器重建 → 也是一次部署观测。
+      // 这一条用 soft：恢复已经成功了，写台账失败不能反过来把恢复说成失败，
+      // 但整轮的部署证据缺了一条，要作废。
+      recordDeployment('restore', { soft: true });
       log(
         '  已恢复公共静默态（缺陷在线、order 2 不在压测路径、超时旋钮 2000）',
       );
@@ -1191,6 +1436,7 @@ main().catch(async (err) => {
         at: new Date().toISOString(),
         ...(await activeSpec.restore()),
       };
+      recordDeployment('restore-abort', { soft: true });
       restoreDone = true;
       console.error('  已在中止路径恢复实验台');
     } catch (restoreErr) {

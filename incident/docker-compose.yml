@@ -7,6 +7,22 @@ services:
       # 绝对路径：工作区 2026-11-04 起搬到仓库外（incident/lab-paths.json）。
       # 相对路径会按 compose 文件所在目录解析，搬完家就指到不存在的目录。
       context: /mnt/my-work/incident-lab/workspace/target-service
+      args:
+        # 制品自述：镜像自己说它是哪个 commit 构建的。
+        # 这是台账里最硬的一档凭据（commit_source: oci-label）；
+        # 没有它，「现在跑的是哪个 commit」只能按构建时刻猜。
+        # incident/lab.sh 在调用 compose 之前把构建上下文的 git HEAD 导进来。
+        GIT_COMMIT: '${GIT_COMMIT:-unknown}'
+      labels:
+        # 构建时刻。BuildKit 命中缓存时镜像 config 里的 created 是最早那一层
+        # 的时间戳（实测停在两天前），所以台账的 built_at 必须来自镜像自己
+        # 打的这个 label。用自己的命名空间：基础镜像已经带着
+        # org.opencontainers.image.created，那个说的是基础镜像的构建时间。
+        #
+        # 换内容重建后 digest 变了，而 created 仍是第一次构建那个纳秒级不变的值
+        # ——缓存残留，不是构建时刻。拿它当 built_at，台账里会出现一条比它自己
+        # 那个 commit 还早的构建时间。
+        io.incident-lab.build-time: '${BUILD_TIME:-unknown}'
     container_name: target-service
     ports:
       - '8080:8080'
@@ -50,6 +66,28 @@ services:
     depends_on:
       target-service:
         condition: service_healthy
+    restart: unless-stopped
+
+  # 真实靶子通道（P2）专用的 Prometheus。
+  #
+  # 与上面那个 prometheus 分开，是有理由的，不是重复：
+  #   · 真实靶子的体检实例**只绑宿主机的 127.0.0.1**（不绑 0.0.0.0，
+  #     公司内网访问不到）。bridge 网络里的容器够不着宿主的回环地址，
+  #     所以这个 Prometheus 必须用 host 网络命名空间。
+  #   · 合成夹具那 4 轮有效证据依赖上面那个 :9090 上的历史数据。
+  #     混在一起就等于动量具。真实通道单独一个实例，两边互不干扰。
+  #
+  # 监听 127.0.0.1:9094，同样不对外。配置在仓库外（含真实靶子的地址）。
+  prometheus-real:
+    image: prom/prometheus:v2.54.1
+    container_name: incident-prometheus-real
+    network_mode: host
+    volumes:
+      - /mnt/my-work/incident-lab/targets/p2/metrics/prometheus-host.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.listen-address=127.0.0.1:9094'
+      - '--storage.tsdb.path=/prometheus'
     restart: unless-stopped
 
   alertmanager:

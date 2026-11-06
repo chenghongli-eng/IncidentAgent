@@ -1,8 +1,269 @@
 # IncidentAgent — 断点存档
 
-最后更新：2026-11-04 晚。本文件是**唯一下次会话的入口**，先读它再动手。
+最后更新：2026-11-06。本文件是**唯一下次会话的入口**，先读它再动手。
+
+---
+
+## 下次开工的任务清单（2026-11-06 收工时排的）
+
+按「先解锁、后跑数」排：前 3 条是**解锁真实环境**的，第 4 条起是**产数**的。
+
+### 阶段 A —— 解锁真实靶子（不需要新凭据，今天就能做）
+
+| #   | 任务                                                                      | 完成判据                                                                                                        | 预估 |
+| --- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---- |
+| A1  | 对真实宿主进程靶子（P2 的 `java -jar`）跑一次 `collector/host-target.mjs` | 写出 1 行台账；读侧 `deploy lookup` 用该 digest 反查命中 `matched_on='digest'`；`pod_started_at` 有真实进程起点 | 0.5h |
+| A2  | 同一次采集里给定 `--commit` + `--commit-source`（来自 Jenkins 构建记录）  | 行里 `commit_source='jenkins-build'`、`commit_reliable=true`；**不要**用本地 git 推断填这一格                   | 0.3h |
+| A3  | 把 A1 的结果写进 `REAL-TARGET.md` gap 2（现在是「尚未真的采过一行」）     | 文档里出现一条真实采集的实测值（仓库内只写代号，内部标识符留仓库外）                                            | 0.2h |
+
+> A1/A2 的依据：`incident/collector/host-target-control.mjs` **27/27** 已经证明了
+> 采集逻辑本身；差的是**对真进程跑一次**。这个动作不改任何代码。
+
+### 阶段 B —— 补硬凭据（要等项目侧配合）
+
+| #   | 任务                                                             | 完成判据                                                                 | 阻塞方     |
+| --- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------- |
+| B1  | 真实项目镜像补 `org.opencontainers.image.revision` LABEL         | 拉真实镜像 inspect 能看到该 label；台账 `commit` 走 `oci-label` 这一档   | 项目构建方 |
+| B2  | （可选）补 `build-time` label，解决 `built_at` 只能靠 CI 时间    | 同上；**不要**用 docker `.Created`（已实测是缓存残留，不是构建时刻）     | 项目构建方 |
+| B3  | 若 B1 短期做不到：明确落档「commit 只到 `jenkins-build` 这一档」 | `REAL-TARGET.md` 写明档位与理由，报告里如实标注 `commit_reliable` 的强度 | 无（决策） |
+
+### 阶段 C —— 跑第一轮真实环境
+
+| #   | 任务                                                                        | 完成判据                                                                                      |
+| --- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| C1  | 用真实靶子跑一轮 `--dry-run`，确认 P1–P12 全绿                              | P12 报「一轮规模」而非「活着」；`dry_run: true` 且 `round_valid: false`（这是预期，不是失败） |
+| C2  | 开跑第一轮真实故障分析（先按 `incident/REAL-TARGET.md` 的档位 A）           | 有 `agent-report`；`channel_audit` 干净；manifest `round_valid: true`                         |
+| C3  | 复盘：把「闸门全绿但结论错」的样本挑出来，判断是 Agent 的问题还是台子的问题 | 要么改评分口径（走 `incident/README.md` 的改动政策），要么改闸门                              |
+
+### 阶段 D —— 继续还技术债（可与 C 并行）
+
+| #   | 任务                                                            | 为什么                                                                         |
+| --- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| D1  | `run-round.mjs` 的 P12b 也要记 `stop_reason`（现在只有 P12 记） | 两类截断分开报的判据要在**两处**都成立，否则开跑前那次仍可能假阴性             |
+| D2  | 归档 manifest 补 `dry_run: false` 字段（老文件没有这个 key）    | 现在正对照只能核对源码字面量，补上后可以直接抽查历史文件                       |
+| D3  | 本地 git clone 的陈旧问题（HEAD 停在 2026-10-19）               | 让 `git-window` 推断至少不再因为「本地没有那个 commit」而系统性偏到同一个 HEAD |
+
+### 收工时的提醒
+
+- 今天的工作**已按你的要求准备提交**（见下方提交说明）；提交前扫了内部 IP / 代号 / 姓名，干净。
+- 报告里凡涉及真实项目，一律用 `P1`–`P10` 指代，完整对应关系留仓库外。
 
 ## 一句话状态
+
+**【2026-11-06 傍晚·续二】四件欠账全部落地：夹具自己写台账、P12 语义修好、
+镜像有 OCI label、宿主形态有 digest 主键。**
+
+| 欠账                               | 状态               | 落在哪                                                                           | 证据                                                                        |
+| ---------------------------------- | ------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 合成夹具每轮都是发布却没有发布记录 | **已做**           | `incident/collector/collect-local.mjs` + `run-round.mjs` 的 `recordDeployment()` | 写出一行真实记录，读侧 `deploy current` delta 0 秒、`commit_reliable: true` |
+| P12 语义修复（闸门绿 ≠ 整轮可跑）  | **已做**           | `incident/runs/provider-probe.ts` + P12/P12b/跑完后的 transcript 复查            | dry-run 实测：`[PASS] P12 provider 接得住一轮规模（51645 token / 1588ms）`  |
+| Dockerfile 0 条 LABEL              | **已做（夹具侧）** | 夹具镜像 + `docker-compose.yml` 的 `build.labels`                                | 镜像带 `org.opencontainers.image.revision` 与 `io.incident-lab.build-time`  |
+| 宿主进程形态没有 digest 主键       | **已做**           | `incident/collector/host-target.mjs`                                             | 对照组 **27/27**；读侧不需要改（`matched_on='digest'` 实测命中）            |
+
+四件里有三件的**共同关键点**是同一句话：
+
+> **「查到了」和「结论成立」不是一回事。** 键要在镜像/产物自己身上，
+> 时间要由构建自己说，没拿到就记未知——不能拿一个「看起来很像」的数去填。
+
+五处控制全部绿：读侧 **39/39**、写侧（registry/CI/cluster）**29/29**、
+夹具段 **16/16**、宿主形态段 **27/27**、探针段 **16/16**。
+
+**这一段还实测出一个此前没人注意的坑**：docker 的 image `Created` **不是构建时刻**
+（换内容重建后 digest 变了，`Created` 仍是第一次构建那个纳秒级不变的值，
+比它自己声明的 commit 还早）。台账的 `built_at` 只能来自构建写进镜像的标签，
+没有就记 null。
+
+**【2026-11-06 收工前·连通性与开工判据】**（今天最后测的）
+外部系统此刻**两个都通**：Jenkins `HTTP 200`、可见 **1032** 个 job；
+Rancher `HTTP 200`、可见 **1** 个 cluster —— 但 Rancher **必须钉私有 CA**
+（`NODE_EXTRA_CA_CERTS` 指向仓库外的 ca pem），**不许 `-k`**。
+凭据一律从 `~/.config/miniclaw-lab/systems.env` 读，**不进 argv、不进日志、不进仓库**。
+
+**「真实测试环境的故障分析」现在能不能开工？——链路齐了，差一次真实采集。**
+今天补齐的正是这条链路上最后一段：台账的**写侧**（registry / CI / cluster / 夹具 / 宿主）
+和**读侧**（`deploy current|lookup|rollout|running`）现在都通。
+但**真实靶子还没被真的采过一行宿主形态**（`java -jar` 那种），
+真实项目的 Dockerfile 也仍然 **0 条 OCI LABEL**（于是它们的 commit 只能靠 CI 构建记录，
+拿不到就是拿不到，记 null）。
+
+因此开工判据是三条，**都满足就可以跑第一轮真实环境**：
+
+1. 对真实宿主进程靶子采到**一行**台账（`collector/host-target.mjs --ledger …`），
+   并用读侧 `deploy lookup` 反查命中（`matched_on='digest'`）；
+2. 真实项目镜像补上 **1 条** OCI LABEL（至少 `org.opencontainers.image.revision`），
+   或明确接受「commit 只来自 Jenkins 构建记录」这一档；
+3. 跑一轮 `--dry-run`，闸门 P1–P12 全绿，且 **P12/P12b 的 provider 结论是「一轮规模」而不是「活着」**。
+
+第 1 条**今天就能做**（采集器已就绪，只差对真进程跑一次）；
+第 2 条要真实项目的构建配合改 Dockerfile；
+第 3 条今天已实测过一次（dry-run 全过）。
+
+**收工前又实测出一个探针缺陷（已修）**：模型的 `thinking` token 会吃掉探针的
+`max_tokens` 预算。`max_tokens=64` 时，模型思考就用掉 ~225 token，回复里没有
+回显 → 探针报 `payload_not_echoed` → 闸门把一个 provider **完全接得住**的轮次
+拦下来（**假阴性**）。修法：`max_tokens` 提到 512，并**记录 `stop_reason`**——
+探针自己的预算用完（`max_tokens`）归成 `probe_output_truncated`，与
+「平台截断上下文」（`payload_truncated`）/「没读到标记」（`payload_not_echoed`）
+分开报。修完连跑 3 次真 provider：全部 `completed: true`、
+`input_tokens ≈ 72500`、`payload_echoed: full`。探针控制 **18/18**。
+
+**同时修掉 dry-run manifest 的自述问题**：`--dry-run` 只跑前置闸门、没跑整轮，
+但 manifest 里 `agent`/`score` 全是 null、`round_valid` 却是 `true` ——
+这份文件读起来像「一轮跑完了而且有效」。现在 dry-run 会写
+`dry_run: true` 并置 `round_valid: false` + `invalid_reason`，控制脚本按
+**这个标志**（而不是 setup/agent 是否为空这种间接形状）清理产物。
+
+**今天没有提交任何 git 改动**——工作区里有若干未跟踪文件
+（含两条 dry-run 生成的 `round-manifest-*.json`，它们是本地量具，**不要进仓库**）。
+公开仓库提交前要扫内部 IP / 代号 / 姓名。
+
+**【2026-11-06 深夜·续】「构建号 → commit」不再是推断，cluster 段也通了。**
+采集器新增 **CI 段**（Jenkins 构建记录）与 **cluster 段**（Rancher 只读），
+写侧控制 **29/29**，读侧控制 **39/39**。四件事：
+
+1. **commit 从「按时间推断」变成「CI 构建记录里的事实」**：Jenkins 的构建号就是
+   tag，`lastBuiltRevision.SHA1` 就是这次构建**实际检出**的 commit。
+   **6 个构建号全部拿到 CI 来源的 commit**，本地 git 推断降级为 `commit_inferred` 保留在行里。
+2. **实测出推断有多不可靠**：`git-window` 3/3 对，`git-head-fallback` **1/3 对**。
+   根因不是算法，是**本地 clone 陈旧**（HEAD 停在 2026-10-19，
+   有一次构建用的 commit 本地根本不存在，于是两次构建都被推断到同一个 HEAD）。
+   结论直接落在代码上：**推断可以留，不能当事实**。
+3. **cluster 段通了，而且没用到 kubectl**（这台机器本来就没有）：
+   Rancher `/v3` 之后的 Kubernetes 代理 + API 密钥 → 按 namespace 读 pods。
+   真实集群上那张镜像：`pod_started_at` = 02:49:04Z、观测于 07:53Z → **跑了约 5 小时**，
+   pod 的 `imageID` digest 与 registry digest **逐字相同**，`running_source` 从 `human` 变成 `k8s`。
+4. **读侧跟着改了三处**：`commit_reliable` 对 `jenkins-build` 为 `true`（仍带「不要断言逐字节相同」的提醒）；
+   新增 `commit_inference_conflict`（事实与推断不符时显式报出来）；
+   **`rollouts` 不再等于行数**——台账现在有心跳行，按行数算会把心跳说成发布过 3 次，
+   改成按 (digest, pod 起点) 分桶，观测行数另给 `observations`，
+   起跑时刻未知的行**不算成一次发布**，由 `rollouts_without_start_time` 单列。
+
+**这一段推翻了上一段里「唯一真正的阻塞是没有集群访问」的说法**——
+阻塞解除了，但**换成了两个新的**：
+
+- **`run-round.mjs` 还没接台账**：合成夹具每一轮本身就是一次发布，
+  但轮次里的 `deploy` 通道仍然只能读手工台账。
+- **P12 语义修复**（闸门绿 ≠ 整轮可跑）仍未做。
+
+**顺带发现并处理了一个合规隐患（我自己今天引入的）**：真实项目的台账、采集脚本、
+勘察记录原本放在**工作区的上一层**（`/mnt/my-work/incident-lab/…`）。
+Agent 以宿主用户身份跑、`ls ..` 就能看到，而合成夹具那一轮走的是**第三方模型**——
+等于把内部地址、namespace、commit 顺手送进了外部上下文。
+已整体搬到**家目录树**（`/home/fs-user/incident-lab-archive/lab-data/`，
+和归档 bundle 同址），工作区邻域现在只剩工作区本身。
+⚠️ **但这只是「不相邻」，不是「不可达」**：宿主模式没有沙箱，
+家目录里的 `~/.config/miniclaw-lab/systems.env`（Jenkins/Rancher 凭据）同样读得到。
+**这条要说清楚，不要当成已经解决**。
+
+完整实测见 `incident/DEPLOY-LEDGER.md` §13（含内部标识符的完整版在仓库外）。
+
+**【2026-11-06 深夜】同一 digest 的重复观测不再被吞掉；`commit_reliable` 与 `deploy running` 落地。**
+采集器控制脚本 **20/20**，读侧控制脚本 **33/33**。三件事：
+
+1. **台账主键从「digest」改成「观测」**。原先把同一 digest 的第二条记录当重复
+   丢弃——重新部署同一镜像、或者事后确认它正在跑，这两种都会**静默丢失**
+   「这条镜像已经跑了多久」，而这正是台账存在的理由。现在同行同 digest 的
+   第二条会被**追加**；只有「同一 digest 两个构建时间 / 两个 commit」这种**矛盾**
+   才拒写并报错。
+2. **`commit_reliable`**：`commit_source` 只在 `oci-label` / `annotation`
+   时为 `true`，`git-window` / `git-head-fallback` / `jenkins-parameter` / `manual`
+   一律 `false`，输出里带一句「只能当线索」。**这不是保守，是实测**——
+   真镜像里的代码对不上任何本地 commit（§12.6），`git-window` 的 0.2h 窗口也照样错。
+3. **`deploy running`**：回答「现在跑的是哪个」，并把**出处**写出来
+   （`source: human|k8s`、`observed_at`、`running_for_seconds`）。
+   人工确认是**一等事实**，但它与 `pod_started_at` 是两件事，采集器
+   `--running-now` 只记前者、绝不编造后者。
+
+**唯一真正的阻塞仍是：没有集群访问（开发机无 kubectl）**，
+所以 `pod_started_at` 仍拿不到，`running_source` 现在只能是 `human`。
+**当集群访问到手时，只要把 `--running-source k8s` 接上，读侧的答案形状不用改。**
+（**此阻塞已于当晚解除**，见上面【深夜·续】——用的是 Rancher 的 Kubernetes 代理，
+不是 kubectl；当时写的「唯一真正的阻塞」这句话在写下后几小时内就不成立了。）
+
+完整实测见 `incident/DEPLOY-LEDGER.md` §11.4、§12.5、§12.6（仓库内、全部用代号）；
+含内部标识符的完整版在仓库外
+`/home/fs-user/incident-lab-archive/lab-data/target-survey/registry-probe-2026-11-06.md`。
+
+**【2026-11-06 晚】采集器（阶段 2 的 registry 段）已实现并验证，16/16；真实台账条目已有 6 条。**
+`incident/collector/collect-registry.mjs` + `collector-control.mjs`：
+匿名读 registry（不需要凭据）→ 拿 digest / built_at → 用 git 历史关联 commit →
+**追加**仓库外的台账文件。commit 分四档：`git-window` / `git-head-fallback` /
+`ambiguous` / `null`，**强度写在 `commit_source` 里**，Agent 看得见。
+**代码在仓库内（可审计、无内部标识符），产物在仓库外，采集器不进 Agent 工作区
+（`sync-tools.mjs` 有守卫）。**
+写这一段时**修掉一个真 bug**：关联逻辑曾取「仓库里最新的 commit」，
+会把**未来的 commit** 关联给更早的构建（真实数据上表现为 `-6.0h earlier`）。
+（上面那条 16/16 的数字已被深夜的 20/20 取代，见本文件最后一节。）
+
+**【2026-11-06】部署台账：读侧（阶段 1）已验证 33/33；阶段 0 的一条真实台账条目也建好了。**
+阶段 0 用的是正在跑的夹具容器的**真 digest + 真 commit**（不是编的），
+台账文件在仓库外 `/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/ledger.jsonl`；
+`deploy check` / `lookup`（完整 digest、**短 digest 前缀**、commit 前缀）/ `current`
+（`matched=true`、`delta=0`、锚点来源 `docker inspect`）全部命中。
+
+**但这一步暴露了设计的两个缺口（见 `incident/DEPLOY-LEDGER.md` §11.3），比台账本身更重要：**
+
+1. **`commit` 与 `digest` 的绑定没有机器凭据**（`commit_source: "manual"`）——
+   12 个候选项目的 Dockerfile **全部 0 条 LABEL**，所以在真实靶子上这是**默认状态**；
+   OCI label 落地前，commit 结论只能当线索，Agent 必须看得出它是人工填的。
+2. **台账主键 `digest` 在宿主进程形态的靶子上不存在**——
+   P2 体检实例是宿主机 `java -jar`，没有镜像也就没有 imageID。
+   **这条必须在阶段 2 采集器开工前定下来**，否则采集器会只支持容器形态。
+   （§11.4 已降级：实测生产是 k8s Deployment，容器形态，digest 主键成立；
+   但采集器仍要给宿主形态留一条路）
+
+仍未做：`run-round.mjs` 写台账（夹具轮次里的 `deploy` 仍只能读临时台账）、
+采集器的 cluster 段（等集群访问）、内网 minimax 队列的 F2 对照轮（等配额恢复）。
+
+**【2026-11-06】部署台账的读侧（阶段 1）已经跑过验证，现为 33/33 全绿。**
+`deploy` 通道（`current`/`lookup`/`running`/`list`/`check`）+ `incident/runs/deploy-ledger-control.mjs`
+在夹具容器（`target-service` 在跑）下实跑通过：共 33 项（正对照与负对照一一配对），
+负对照全部满足「非零退出 / stderr 说出『台账缺条目』/ stderr 绝不说『无代码变更』/ stdout 为空」。
+`node --check`（三个脚本）、`npm run docs:check` 均通过。
+**状态从此前的「写完待验」升级为「已验证」。**
+
+**【2026-11-05 17:20Z】内网 minimax 队列的第一次基线轮（F2 `0858Z`）中止在 provider 额度上。**
+闸门**全过**（含 P12 连通性 1680ms 通过），静默态坐稳 1067 秒、注入成功、告警正常 firing——
+**Agent 一开口就拿到 429「当前已达到 Token Plan 用量上限」**，轮次作废，台子已复台。
+这不是台子的问题，是**内网平台配额**的问题。但它暴露了一条**闸门缺陷**：
+**P12 单发一次小请求就绿了，测不出「整轮需要的额度」**——
+绿了 19 分钟之后整轮倒在第一次真实调用上。
+内网 minimax 队列**仍是 0 轮有效证据**；
+不再重试，直到确认配额恢复。
+→ **建议把内网配额留给真实靶子**：合成夹具的轮次改回 deepseek 队列跑
+（合成靶子不是公司代码，档位 C 完全够用；拿公司共享配额烧合成轮是浪费）。
+
+**【2026-11-05 17:10Z】P2的只读体检跑完了：六条通道全部打通，
+且每条用的都是真实项目的数据——最关键的一条是 **PromQL 里的
+`application="target-service"` 被自动改写成 `application="<目标应用>"`**，
+说明「靶子变成配置而不是代码」这层是真的成立的，不只是文档。
+体检过程中改了两处产品本体的真实缺口（actuator 认证支持；
+`runtime started/env` 在靶子不是容器时不退出）。
+真实靶子的 Prometheus 单独起了一个（`prometheus-real`，host 网络 127.0.0.1:9094），
+**不碰合成夹具那个 :9090 的历史数据**。
+剩下的仍是那两件：**部署台账**（构建号 → commit）和
+**内网 minimax 队列自己的 F2 对照轮**。**
+
+**【2026-11-05 16:20Z】provider 的三项待验做完了，模型修好了，默认 provider 已切到内网。
+内网 LiteLLM（`https://<内网推理服务>:4001`）只挂 Anthropic 协议（`/v1/chat/completions` 返回
+404，这**不影响** Miniclaw——它说的就是 Anthropic 协议）；tool calling 与流式都实测通过；
+CA 早就在系统信任库里（`/etc/ssl/certs/litellm-ca.pem`），TLS 不用改。
+原配置的模型 `MiniMax-M3` 对这把 key 是 **403 不可用**，已改成 `MiniMax-M2.7`（`MiniMax-M2.7-Highspeed` 也通）。
+冒烟 `scripts/test-real-model-smoke.ts`：`completed=true / exactMatch=true / 1381ms`。
+**默认 provider 已从 deepseek 切到内网 minimax**（`PUT /api/config/claude/default`，`persisted=true`）。
+⚠️ **这意味着模型队列再次分裂**：deepseek 队列那 4 轮有效证据仍在原处，内网 M2.7 队列
+**目前 0 轮**——从现在起的新轮次全部进新队列。**
+下一步：先把 目标项目（P2）跑起来做只读体检，同时补 minimax 队列自己的 F2 对照轮。\*\*
+
+**【2026-11-05】勘察的四个问题全部有答复了，两个原本的阻塞解除、一个新缺口暴露。
+合规档位升到 **A**（内网自建平台上有 minimax 模型，走公司内网地址）——
+「公司代码不外发」的前提已解除，真实项目源码可以进 prompt。
+新缺口是**部署锚点的最后一环**：k8s 里的 `<BUILD_TAG>` 是 **Jenkins 构建号**，
+不是 commit sha，且候选项目都没有 `git-commit-id` / `build-info` 插件，
+**应用没法自己报出 commit** → 需要一条「构建号 → commit」的**部署台账**。
+`T_dep` 本身不受影响（容器启动时间是硬事实）。
+下一步仍只有一件事：先把 provider 的三项待验（OpenAI 兼容 / tool calling / 开发机可达）
+做掉，再对 `P2` 跑一次只读体检。**
 
 **【2026-11-04 傍晚】方向被重新校准：产品本体（Prompt + Skills + 只读 CLI）已经能用，
 真正缺的不是评测精度，而是"接真实系统"。三层定位已写死
@@ -420,6 +681,69 @@ F2 `0738Z` + F4 `0423Z` / `0431Z`。**
 cap 提到 30 分钟、空闲看门狗提到 10 分钟并写明退出原因、manifest 新增 `provider`
 字段记录本轮模型。模型额度本人确认已恢复，provider 仍是 MiniMax-M3（与已跑的
 F4 轮次可比）。**第三轮已开跑**，详见下节。
+
+## 【2026-11-05】四个勘察问题答复完毕：档位 A 成立，部署锚点缺最后一环
+
+### 四个答复
+
+1. **`<BUILD_TAG>` 是 Jenkins 构建号**（如 `:39`），**不是 commit sha**。
+2. **生产日志在生产主机上可复制**；测试环境在 Rancher，日志好拿；
+   本地开发旧日志 P1 已有 147.6MB。用户的顾虑是「故障不可能只分析一次」。
+3. **内网自建平台上有 minimax 模型**，走公司内网地址，配置由公司自己设置 → **档位 A**。
+4. **所有候选项目本地都能跑起来**。
+
+### 三个现场核查（只读构建文件与元数据，不读业务代码）
+
+| 探针                             | 结果                                                  |
+| -------------------------------- | ----------------------------------------------------- |
+| `git-commit-id` 插件（P1/P2/P6） | **都没有** → 应用**不能自己报出 commit**              |
+| `build-info-maven-plugin`        | **都没有** → jar 内不会有 `git.properties`            |
+| 内部制品库 `GET /v2/`            | 可达但 **401** → 需凭据才能 `docker manifest inspect` |
+
+### 由此产生的结论
+
+- **合规档位从 C 升到 A**：真实项目源码可以进 prompt。
+  Miniclaw 侧只改 Provider 的 `base_url`，Agent 逻辑不动。
+  ⚠️ **换 provider 会分裂模型队列**——合成靶子那 4 轮有效证据属于 deepseek 队列，
+  内网模型是另一个队列，**不能放进同一张「谁更强」的表**。
+  新模型下第一件事是**补一轮基线**，不是直接进真实靶子。
+- **部署锚点缺最后一环**：受影响的是「**这次部署改了什么**」，
+  不是「部署是什么时候」。`T_dep` 有硬来源（容器启动时间、`runtime started` 通道）；
+  缺的是 `tag → commit`。
+  → 新增待建设施：**部署台账**（仓库外的 `tag → {commit, build_time}` 映射），
+  由 `incident-readonly` 的 `git` 通道读取，**不新建联网通道**。
+  台账缺条目必须**明确报错**，不能退化成「窗口内无代码变更」——
+  这两件事对 Agent 的意义完全相反（"排除了发布" vs "没查到"）。
+  此前那句乐观假设（「如果 BUILD_TAG 是 commit sha 就一步闭环」）**作废**。
+- **日志三来源分工，不是替代关系**：
+  生产日志 = 真实分布 + **人写的结论**（回放对照的真值）；
+  测试环境 Rancher = 真实部署产物，**唯一能练「部署归因」的地方**；
+  本地开发旧日志 = 噪声与信号混杂的语料，但**没有部署锚点**，练不了部署归因。
+- **「一次故障要分析很多次」的正确解法**：把现场归档成**可复用的场景包**
+  （告警 + 指标查询与窗口 + 日志片段 + 当时的 commit 集合 + 人类结论），
+  **采集一次、回放多次**。换模型/换 Prompt/换判据反复跑同一场景，
+  每次结论可比——这是合成靶子用「反复注入」换来的能力，
+  在真实靶子上它零风险、无限次，而且对照的是人写的真值。
+
+### 下一步（顺序有讲究）
+
+1. **验证 provider 三项**：OpenAI 兼容？tool calling + streaming？开发机可达？
+   这三项不过，档位 A 只是纸面上的。
+2. **建 `incident/targets/<name>.json`**（`REAL-TARGET-SURVEY.md` 里已把字段定稿）
+   - `incident-readonly` 从硬编码改成读配置。
+3. **对 `P2` 跑只读体检**（actuator 本来就开着，最省事）。
+4. **建部署台账**（先手工导一张构建号 → commit 的对照表，格式定下来再自动化）。
+5. **抓回放素材**——生产日志和旧指标**有真实时效性**，越晚做越做不了，
+   这一条应当排在最前，与上面几条并行。
+
+### 文档变更
+
+- `REAL-TARGET-SURVEY.md`：新增「四个问题的答复（2026-11-05）」，
+  靶子描述文件草案定稿（加 `tagKind` / `ledgerPath`）。
+- `REAL-TARGET.md`：新增「档位 A 的落实情况」「部署台账」两节，
+  锚点表加「部署改了什么」一行，第 0 步补场景包设计，接入清单勾掉 3 项。
+- **P1–P10 与真实项目名的对照表仍只存仓库外**（`target-survey/survey-2026-11-04.full.md`），
+  仓库内不保留副本——本仓库是公开仓库。
 
 ## 【2026-11-04 傍晚】方向校准：本体已经能用，缺的是"接真实系统"
 
@@ -2781,3 +3105,518 @@ Agent 读不到、复核人读得到；或者用 `git revert` 代替剪枝——
 3. **F4 的受控对照组**（充分性实验）：F4 至今**有效轮 0**，
    「两条件叠加」目前只有必要条件证据，没有充分性证据。
 4. 下一轮 F4（deepseek 队列）——**上一轮是污染作废的，这一轮才可能成为 F4 的第一份有效证据**。
+
+## 【2026-11-05 16:20Z】provider 三项待验做掉 + 模型修复 + 默认切换 + 模型队列再分裂
+
+### 八、provider 的三项待验（结论：全部通过，但有两个"看起来像问题"的点要先解释掉）
+
+用户答复的 provider 形态是「公司自建在 <内网推理平台> 上的 minimax 模型，走内网地址，
+配置由公司自己设」，并让直接沿用 Claude `settings.json` 里的那份配置。
+
+沿用的配置（只列非密项）：
+
+| 项             | 值                                         |
+| -------------- | ------------------------------------------ |
+| 协议           | Anthropic Messages（`/v1/messages`）       |
+| 内网基址       | `https://<内网推理服务>:4001`              |
+| 模型（原配置） | `MiniMax-M3`                               |
+| 凭据           | `settings.json` 里那把（已入库并加密落盘） |
+
+实测结果：
+
+| 待验项          | 结果                                                                                                                                      |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI 兼容端点 | `POST /v1/chat/completions` → **404**                                                                                                     |
+| Anthropic 协议  | `POST /v1/messages` → **200**，工具调用返回 `stop_reason: tool_use`                                                                       |
+| 流式            | SSE 事件序列完整（message_start / content_block / input_json_delta / stop）                                                               |
+| 开发机可达      | 可达；**CA 已在系统信任库**（`/usr/local/share/ca-certificates/litellm-ca.crt` → `/etc/ssl/certs/litellm-ca.pem`），不需要改任何 TLS 设置 |
+| 模型可用性      | `MiniMax-M3` → **403**（"not available for this API key"）；`MiniMax-M2.7` → 200；`MiniMax-M2.7-Highspeed` → 200                          |
+
+**两个"看起来像问题"的点，先解释掉，别当成缺口：**
+
+1. **`/v1/chat/completions` 返回 404 不是故障。** 这套 LiteLLM 只挂了 Anthropic 协议。
+   Miniclaw 说的本来就是 Anthropic 协议（`ANTHROPIC_BASE_URL` + `/v1/messages`），
+   所以 404 反而说明我们踩在了对的协议上。用 OpenAI 协议去探才需要它。
+2. **原配置的模型名 `MiniMax-M3` 是坏的**，但**不是配置错**——token 对这把 key 只有 M2.7 系列可用。
+   已 `PATCH /api/config/claude/providers/e4fbf7fc7976e3b4` 把模型改成 `MiniMax-M2.7`，
+   返回 `applied.success=true / stoppedCount=2 / failedCount=0 / persisted=true`。
+   （第一版我自己的解析脚本把这个嵌套在 `provider` 下的响应读成了空字段，差点误判成失败；
+   看原始响应才发现是解析问题，不是请求问题。）
+
+### 九、默认 provider 已切到内网，且这带来一次新的模型队列分裂
+
+`PUT /api/config/claude/default {"providerId":"e4fbf7fc7976e3b4"}` →
+`defaultProviderId=e4fbf7fc7976e3b4`、`applied.success=true`、`persisted=true`。
+冒烟（`scripts/test-real-model-smoke.ts`，一次真实请求）：`completed=true / exactMatch=true / 1381ms`。
+
+⚠️ **换 provider 就是换队列，这次分裂必须记清楚：**
+
+| 队列                    | 模型                    | 有效轮 | 状态                       |
+| ----------------------- | ----------------------- | ------ | -------------------------- |
+| deepseek 队列（既有）   | `deepseek-v4-flash[1m]` | 4      | F2 ×2、F4 ×2；**不再新增** |
+| 内网 minimax 队列（新） | `MiniMax-M2.7`          | **0**  | 从现在起的新轮次全部进这里 |
+
+**两个队列不能放进同一张「谁更强」的表里比。** deepseek 那 4 轮的结论（F4 的必要性/充分性、
+根因分层缺陷）只在 deepseek 队列内部成立；内网队列目前**一份证据都没有**。
+
+直接后果：**下一轮 F4 不会和 11-04 的 F4 可比**——模型不同。
+要恢复可比性，得在 minimax 队列里补它自己的 **F2 对照轮**（这是两队列对照的前提，
+和当初 deepseek 队列缺 F4 对照组是同一类问题，只是换了模型）。
+
+另外记一条边界：**内网 minimax 是第三方模型 API（公司的），不是"本地推理"**。
+它满足档位 A 的"代码不出公司"（请求只发到公司内网地址），但它**不是**离线模型——
+不要把它说成"公司代码不出内网"以外更强的承诺。
+
+### 十、下一步（顺序）
+
+1. **目标项目（P2）只读体检**：把 <目标应用> 跑起来，开 actuator 的 prometheus 端点，
+   让 CLI 的四条通道（metrics / logs / git / actuator）都能对真实项目取证。
+   体检目标是"证据通道通不通"，**不是**评分——真实项目还没有对应的故障注入夹具。
+2. **minimax 队列的 F2 对照轮**：给新队列补上自己的基线。
+3. 部署台账的设计（用户要求最后做）。
+
+## 【2026-11-05 17:10Z】P2只读体检：六条通道全部打通
+
+### 一、这次体检做了什么、没做什么
+
+**做了**：把 Agent 的**唯一证据通道**（`incident-readonly`）接到一个真实项目上，
+逐条验证观测通道搭得对不对。不注入故障、不评分。
+细节写在 `incident/REAL-TARGET.md` 的「P2 体检的执行结果（2026-11-05）」一节。
+
+**没做**（边界）：
+
+- **没有评分**。真实项目还没有对应的故障注入夹具，现在只能证明"通道通"，
+  不能证明"诊断得准"。评分能力仍然只在合成夹具那条线上（rubric v6、4 轮有效证据）。
+- **T_dep 这一环仍然缺**。目标项目没有 `git-commit-id`，应用报不出自己的 commit。
+  体检实例的启动时刻是**我们**启动时知道的，不是从部署台账推出来的。
+  真实场景里这一环只能靠台账。
+- **没有碰生产**。没有碰共享 dev 库里的业务数据（只读 + 写库的定时任务全关 + Redis 换库隔离）。
+
+### 二、搭台子时定下的几条规矩（换人来做会踩同样的坑）
+
+| 规矩                                                               | 原因                                                                                                      |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| 不复用用户 IDE 里那个 目标项目进程，另起一个实例（12306）          | IDE 那份是用户的，参数不该由我们改；另起才可复现                                                          |
+| 只绑 `127.0.0.1`                                                   | 体检实例连的是**共享的 dev 库**，不该对内网暴露成一个能被随手调的服务                                     |
+| Prometheus 单独一个（`prometheus-real`，host 网络 127.0.0.1:9094） | 合成夹具那 4 轮有效证据依赖 `:9090` 的历史数据，混用等于动量具                                            |
+| 写库的定时任务全改成永不触发                                       | 体检期间不希望往共享 dev 库写子任务                                                                       |
+| Redis 换到 db 15                                                   | 目标项目有个 `@Scheduled(fixedDelay=1000)` 的消费者会从**共享** Redis 队列 `rightPop`，不隔离会抢别人的活 |
+
+启动命令在仓库外：`/mnt/my-work/incident-lab/targets/p2/start-target.sh`；
+描述文件：`/home/fs-user/incident-lab-archive/targets/p2.json`；
+Prometheus 配置：`/mnt/my-work/incident-lab/targets/p2/metrics/prometheus-host.yml`。
+
+### 三、体检过程中改的两处产品本体
+
+不是给体检临时打补丁，是**真实靶子必然遇到**的缺口：
+
+1. **actuator 通道支持认证**（`ACTUATOR_TOKEN` 或 `ACTUATOR_USERNAME`+`ACTUATOR_PASSWORD`）。
+   凭据只从环境变量读，**不进描述文件**——描述文件会被复制，凭据不该跟着走。
+2. **`runtime started` / `runtime env` 不再因"不是本地容器"就退出**。
+   靶子是宿主进程时，锚点回落到描述文件的 `startedAt`；
+   `runtime env` 明确打印 `container_env: (unavailable)`，而不是假装读到了。
+
+回归：合成夹具下**旧 CLI 与新 CLI 的 12 条通道命令 stdout/stderr 逐字节一致**
+（唯一差异是 `actuator health` 里的磁盘剩余字节数，是活值）。
+
+### 四、顺手记下的一条公司侧发现
+
+目标项目的 dev 配置里 `<artifactId>.security.mock-enable=true`，
+`Authorization: <mockSecret><用户号>` 就能以任意用户身份通过鉴权。
+这是**项目自己的开发配置**，不是我们开的口子，但**生产必须关掉**。
+接入真实项目时值得和团队确认一次。
+
+### 五、下一步（顺序）
+
+1. **部署台账**（用户要求最后做的那个）：把「构建号 → commit」变成机器可读。
+   用户已给出判断——台账的主数据源**不该是 Jenkins**，而该是
+   **集群里实际跑的镜像 + Registry 的 label**，Jenkins 只作可选富化源，
+   并且流水线要把最终 image 字符串回写一份。
+2. **内网 minimax 队列的 F2 对照轮**：新队列目前 0 轮，缺自己的基线。
+3. `incident/runs/sync-tools.mjs` 还没对工作区那份 CLI 执行过
+   （工作区在仓库外，覆盖它需要用户点名授权）。**Agent 真跑一轮之前必须先同步**，
+   否则 Agent 用的还是旧 CLI——这条是硬前提。
+
+## 【2026-11-05 17:20Z】内网 minimax 队列第一轮（F2 `0858Z`）：中止在配额，并暴露一条闸门缺陷
+
+### 一、发生了什么（按时间）
+
+| 时刻（Z） | 事件                                                                                                                   |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 08:58:17  | 开跑。**闸门 12 项全过**，含 `P10 provider=minimax model=MiniMax-M2.7`、`P12 provider 连通（1680ms，exactMatch=true）` |
+| 08:58:29  | 容器重建（旋钮写入），静默态坐下                                                                                       |
+| 09:16:29  | 坐稳 1067 秒（≈17.8 分钟）后注入 F2：一次提交删掉判空兜底                                                              |
+| 09:17:04  | 告警 `HighServerErrorRate` firing（value 0.097）——**台子这部分完全正常**                                               |
+| 09:17:42  | Agent 启动，发出**第一次真实 API 调用**                                                                                |
+| 09:17:42  | **429**：`MinimaxException - 当前已达到 Token Plan 用量上限`                                                           |
+| 09:18:48  | 轮次作废，复台完成                                                                                                     |
+
+`round_valid=false`，`agent=null`，`score=null`。
+manifest：`incident/runs/round-manifest-2026-11-05T0858Z.json`。
+
+### 二、这不是台子的问题
+
+台子从头到尾是对的：闸门全过、静默态坐稳 17.8 分钟、注入只有一个维度（代码）、
+告警在注入后 35 秒正常 firing、中止路径把 `LOAD_PATHS` 复原了。
+**倒的是 provider**，`run-round.mjs` 自己的判断也是对的（它明确说
+「这是 provider 额度/限流问题，不是 Agent 也不是台子的问题」）。
+
+### 三、暴露的闸门缺陷：P12 测不出「整轮需要的额度」
+
+这是本轮**真正值得记的东西**：
+
+`P12` 的设计目的是「别白等一轮」——它在开跑前发一次小请求，通了就放行。
+11-02 那两轮是因为**额度完全没恢复**而白等的，P12 确实能拦住那种情况。
+
+但这次是**另一种情况**：P12 发一次小请求 → 绿；**19 分钟后**真正的轮次开始，
+需要的是完整 Prompt + Skills + 多轮工具结果的上下文，**量级完全不同**——
+第一次调用就撞上限额。**P12 绿了，整轮照样死。**
+
+**P12 的逻辑是「provider 通不通」，不是「这一轮跑不跑得完」。**
+「通」是「跑得完」的必要条件，不是充分条件。
+把必要条件当充分条件用，就会得到**绿色的假信号**——
+这正好是实验室最忌讳的失败模式（[[gates-must-not-silently-skip]]）。
+
+更麻烦的一层：**内网平台是共享的**。配额被同事用掉多少，我们看不见，也控制不了。
+这意味着**这个队列天然不可能给出「一定能跑完」的保证**，只能给出「此刻还够」。
+
+**可能的修法**（还没做，留给下一轮决策）：
+
+1. **发一次接近真实规模的探测请求**再放行——代价是本身就要花掉近似一轮的额度，
+   等于把"白等"换成"白花"，不划算。
+2. **把 P12 的语义降级**：不再当作"能跑完"的保证，只当作"能开口"的检查，
+   并在文档里写明这一点（最诚实，也最省）。
+3. **换队列**：合成夹具的轮次用 deepseek 跑（见下）。
+
+本轮倾向于 2 + 3，因为 1 的代价和收益不成比例。
+
+### 四、结论：内网配额应该留给真实靶子
+
+**合成夹具不是公司代码。** 档位 C（代码进第三方 API）对合成靶子和开源项目
+**完全没有问题**——这是 `REAL-TARGET.md` 里早就写明的。所以：
+
+| 轮次类型          | 该用哪个队列     | 理由                                             |
+| ----------------- | ---------------- | ------------------------------------------------ |
+| 合成夹具（F2/F4） | **deepseek**     | 档位 C 够用；已有 4 轮有效证据，**队列连续可比** |
+| 真实公司项目      | **内网 minimax** | 档位 A 是硬要求；配额稀缺，只花在必须花的地方    |
+
+把合成夹具的轮次放到内网配额上跑，**既浪费了稀缺的公司配额，
+又平白把队列从 deepseek 换成 minimax、打断了已有 4 轮证据的可比性**。
+（本轮一开始把默认 provider 切到内网，是为了"把准备做全"；
+按这条结论，**合成轮次应当切回 deepseek**，内网留给 P2/P1 那类真实靶子。）
+
+### 五、下一步
+
+1. **等确认内网配额恢复**，再谈真实靶子（P2）的轮次——**在那之前不要再烧静默期**。
+2. 若现在就要跑合成夹具的轮次，**把默认 provider 切回 deepseek**。
+3. P12 的语义按上面第 2 条修（降级说明，别让它继续给"能跑完"的假信号）。
+4. 部署台账的读侧（`deploy` 通道 + 负对照 + 缺条目硬报错）——不依赖 provider，随时可做。
+
+### 六、顺带：`sync-tools.mjs` 已执行
+
+用户点名授权后已执行 `node incident/runs/sync-tools.mjs`，
+工作区那份 CLI 与仓库源**逐字节一致**（`diff -q` 通过）。
+本轮 Agent 用的就是新 CLI（虽然它没来得及用上任何通道就倒在配额上）。
+
+## 【2026-11-05 18:0xZ】部署台账读侧（阶段 1）写完，**尚未执行验证**
+
+### 一、这一节的状态必须说清楚
+
+**代码和文档都落盘了，控制脚本一次都没跑过。** 写代码期间 Claude Code 的
+Bash 安全分类器（deepseek-v4.1-flash）持续不可用，`node --check` 与执行都欠着。
+所以这是「写完待验」，**不是**「已验证」。
+
+下次会话第一件事：
+
+```bash
+node incident/runs/sync-tools.mjs            # 闸门跑工作区那份 CLI，不同步等于验旧码
+node incident/runs/deploy-ledger-control.mjs
+```
+
+两条都必须绿。红了**不要改断言去迁就实现**——这是本仓库反复吃过亏的那一类。
+
+### 二、做了什么
+
+| 文件                                      | 改动                                                         |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| `incident/tools/incident-readonly.mjs`    | 新增 `deploy` 通道：`current` / `lookup` / `list` / `check`  |
+| `incident/runs/deploy-ledger-control.mjs` | 新增；负对照 + 正对照，自建四种临时台账                      |
+| `incident/DEPLOY-LEDGER.md`               | 新增第 10 节（已实现的读侧、纪律、控制覆盖表）；阶段表标状态 |
+| `incident/targets/README.md`              | 新增 `ledgerPath` 字段与三个环境变量                         |
+| `incident/RESUME.md`                      | 本节                                                         |
+
+台账路径解析：`DEPLOY_LEDGER` 环境变量 **覆盖** 描述文件的 `ledgerPath`
+（与日志/仓库/容器同一规则）。**CLI 只读文件、不联网、不持凭据**——
+采集器是另一个进程的事，凭据不进 Agent 可达范围。
+
+`containerStartedAt()` 拆成 `startAnchor()`（返回 `{ms, source}`）+ 薄包装，
+这样 `deploy current` 能**明说锚点是从哪来的**（docker inspect 还是描述文件的
+`startedAt`）。行为与拆分前一致。
+
+### 三、一个值得单独记的设计决定：措辞被可判定性反过来管住了
+
+负对照要断言三件事：
+
+1. 非零退出
+2. stderr 含「台账缺条目」
+3. stderr **不含**「无代码变更」
+4. stdout 为空（调用方没法把一次 miss 解析成"结果"）
+
+我最初的报错文案里写了「这不是『窗口内无代码变更』」——**这句话本身就让第 3 条永远为真**，
+断言退化成废检查。所以我把错误路径上这个短语**整个删掉**，改成「不等于『排除了发布』」。
+
+**规矩**：只要断言是「某文本不得出现」，被断言的路径上就不能出现该文本，连否定用法也不行。
+这不是措辞讲究，是让检查保持可判定。
+
+### 四、三条纪律写进了输出（不是文档里）
+
+1. **过期跟着答案走**。每个命中都带 `ledger_freshness`（`newest_collected_at` /
+   `age_hours` / `stale`）。采集器三月死掉、十一月还在答「这个 digest 是 commit X」
+   ——这是台账最危险的谎，它**不报错**，只是过期。
+2. **重复 digest 要报出来**（`deploy check`），不挑一条信。
+   同一个 digest 两条不同 commit = 「哪个代码在跑」这个问题本身有歧义。
+3. **commit 为空就原样留空**，不猜、不回落（对应 `DEPLOY-LEDGER.md` §6 第 1 条）。
+
+### 五、已知边界（不要当成已完成）
+
+- **合成夹具的轮次还不写台账**。夹具每轮 F2/F4 本身就是一次发布（建 commit +
+  重建容器），但 `run-round.mjs` 不写 rollout，所以夹具轮次里 `deploy` 通道
+  只能读手工/临时台账。接上它是阶段 2 的事。
+- **还没有一条真实台账**。阶段 0（人工填一条）也还没做。
+- 控制脚本在夹具容器**没起**时，两项 `current` 相关的检查会判 FAIL 并在 detail 里
+  写明「没有验成，不是通过」——这是刻意的，不要让它们变成静默跳过。
+
+## 【2026-11-06】部署台账读侧（阶段 1）**验证通过**，21/21
+
+### 一、交接状态的终结
+
+上一节标的「写完待验，尚未执行验证」到此结束。实跑顺序与交接件一致：
+
+```bash
+node --check incident/tools/incident-readonly.mjs
+node --check incident/runs/sync-tools.mjs
+node --check incident/runs/deploy-ledger-control.mjs   # 三份都 SYNTAX OK
+node incident/runs/sync-tools.mjs                       # 工作区副本与源一致
+node incident/runs/deploy-ledger-control.mjs            # 21/21 通过，exit=0
+```
+
+夹具前置：`target-service` / `incident-prometheus` / `incident-prometheus-real` /
+`incident-alertmanager` 四个容器当时都在跑，所以两项 `current` 用例是**真验成**的
+（不是「没有验成，不是通过」那一路）。
+
+### 二、这轮验到了什么
+
+- **正对照 12 项**：健康台账自述健康；按完整 digest / 裸 hex digest / image ref /
+  image tag / commit 前缀五种键都能查到同一 commit；`list` 按新到旧返回且不整体拒绝；
+  陈旧台账**照答但自带 `ledger_freshness.stale=true`**（age_hours=72）；
+  `DEPLOY_LEDGER` 压过描述文件 `ledgerPath`，环境静默时回落到描述文件；
+  `current` 对上正在跑的容器（delta=0s）。
+- **负对照 9 项**：查不到的 digest / 裸 digest / tag、台账文件不存在、
+  **完全没配台账**、台账某行损坏——全部非零退出、stdout 为空、
+  stderr 说出「台账缺条目」且**绝不说「无代码变更」**；
+  损坏行的错误还点名了「第 2 行」；同一 digest 出现两次时**报出来**（不挑一条信）。
+- **一条容易漏的不变量**：`:101` 不会被 tag `10` 前缀命中（宽松匹配会把故障归到错误的
+  发布上，比查不到更糟）。
+
+### 三、状态变更
+
+- 部署台账**读侧（阶段 1）= 已验证**。
+- 仍然**未做**：采集器（阶段 2–4）、阶段 0 的一条真实台账、
+  `run-round.mjs` 写台账（夹具轮次里的 `deploy` 仍只能读临时台账）。
+- `npm run docs:check` 通过（65 个 Markdown）；`git diff --check` 通过
+  （修掉了 RESUME.md 末尾多出的一个空行）。
+
+## 【2026-11-06】部署台账阶段 0：一条**真实**台账条目已建，暴露设计两个缺口
+
+### 一、做了什么
+
+台账文件（仓库外，append-only JSONL）：
+`/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/ledger.jsonl`。
+
+条目每一字段都来自机器事实，不是编的：`digest`/`pod_started_at`/`built_at` 来自
+`docker inspect target-service` 与 `docker images`，`commit` 来自 target-service 仓库 HEAD
+（`git cat-file -e` 通过）。读侧消费它：`deploy check` 绿、
+`deploy lookup <digest>` 与 `deploy lookup 41ef6f2`（commit 前缀）都命中同一条、
+`deploy current` `matched=true` / `delta_seconds=0` / `anchor_source="docker inspect"`。
+
+细节与自检清单逐条对账见 `incident/DEPLOY-LEDGER.md` §11。
+
+### 二、暴露的两个缺口（**比台账本身更重要，别当小事**）
+
+1. **`commit` 与 `digest` 的绑定没有机器凭据。** 我填的是 `commit_source: "manual"`，
+   填法是「镜像构建时刻之前最近的 git HEAD」——**不是从镜像里读出来的**。
+   构建与提交之间若有并发提交或延迟，这条台账会**自信地给出错误的 commit**，
+   而台账里没有任何字段能暴露这一点。
+   实测：**12 个候选项目的 Dockerfile 全部 0 条 `LABEL`**
+   → 在真实靶子上这是**默认状态**，不是过渡态。
+   **推论：OCI label 落地（阶段 3）之前，commit 结论不可自动采信，只能当线索；
+   Agent 侧必须能看出 `commit_source` 是 `manual` 还是机器来源。**
+2. **台账主键 `digest` 在宿主进程形态的靶子上不存在。**
+   设计把 digest 定为主键，前提是「靶子以镜像部署，pod 有 imageID」。
+   但 **P2 体检实例是宿主 `java -jar` 形态**（无容器、无 imageID），主键直接不存在。
+   公司里 java 服务直接 `java -jar` 是常态形态，不是边角。
+   **这条必须在阶段 2 采集器开工前定**（候选主键：构建产物自身 sha256、
+   或「jar 路径 + mtime + commit」），否则采集器会先按 digest 写死再发现一半用不了。
+
+### 三、下一步（按优先级）
+
+1. **定宿主进程形态的主键**（缺口 2）——这是阶段 2 的前置，不定就会返工。
+2. `run-round.mjs` 写台账——让合成夹具轮次里的 `deploy` 通道真正连上发布归因，
+   而不是只能读临时台账。
+3. 阶段 2 采集器（registry 段）。
+4. 内网 minimax 队列的 F2 对照轮——**等配额恢复再说**。
+5. P12 语义修（降级说明，别给「这一轮能跑完」的假信号）——仍未做。
+
+## 【2026-11-06 晚】采集器（阶段 2 registry 段）已实现并验证；"读不到镜像源"是误判
+
+### 一、纠正了一个方向性的误判
+
+之前勘察记的「制品库 `GET /v2/` 返回 401」被读成了「读不到镜像源」，
+差点让整条部署台账路线被判死刑。**实测：制品库是 Nexus 3.36 (OSS)，不是 Harbor；
+401 只是 registry 根路径的正常行为，具体仓库的 `tags/list` / `manifests` / `blobs`
+匿名可读。** 详见 `incident/DEPLOY-LEDGER.md` §11.4；
+含内部标识符的完整实测在仓库外
+`/home/fs-user/incident-lab-archive/lab-data/target-survey/registry-probe-2026-11-06.md`。
+
+顺带确认：生产是 **k8s Deployment**（Rancher 建的工作负载，tag=构建号），
+**容器形态，digest 主键成立**——「宿主形态没有 digest」降级为只影响本地体检实例。
+
+### 二、做了什么
+
+`incident/collector/collect-registry.mjs`（采集器）+ `incident/collector/collector-control.mjs`
+（控制脚本，**16/16 通过**）。它匿名读 registry → 拿 `digest` / `built_at` →
+用 git 历史关联 commit → **追加**仓库外的台账文件。
+
+**真实数据已跑通**：P2 的 6 个构建号采进真实台账，读侧 `deploy lookup`
+（完整 digest、commit 前缀）都能命中——**写侧和读侧第一次在真实数据上接上了**。
+
+顺带补了读侧一个**真实的假阴性**：`deploy lookup` 原本只认完整 64 位 digest，
+**docker 打印的是 12 位短 image ID**，粘进来会得到「台账里没有」——
+在真实靶子上这等于把「我查的是缩写」说成「没有这次发布」。
+现在支持短 digest 前缀；**同时新增一条负对照**：前缀同时命中两条时
+必须报「歧义」，不许挑一条（挑一条=把故障归因到可能没在跑的那个版本）。
+控制脚本因此从 21 项涨到 **26/26**。
+
+### 三、写这段时修掉一个**真 bug**（不是测试不过，是会给出错误答案）
+
+第一版的关联逻辑在「窗口内没有 commit」时取的是**仓库里最新的 commit**，
+而那可能是**构建之后**才提交的。真实数据上直接暴露：
+`tag 648 → "nearest is -6.0h earlier"`（负数）。
+**这正是「自信地给出错误的 commit」。** 修法：取**构建之前最近**的 commit；
+构建**早于所有 commit** 时 → `commit_source: "null"`，不写 commit（配了负对照）。
+
+另外**调了一次规则**：原来用「6 小时窗口内只有 1 个 commit」判强关联，
+真实项目一天提交十几次 → 6 小时内常有 4 个 commit → 几乎每次 `ambiguous`、采集器等于没用。
+改成「**取构建前最近的 commit**（唯一）+ **按距离分档**」，
+同一批真实数据立刻变成 3 条 `git-window`（距构建 0.2–0.7h）+ 3 条 `git-head-fallback`
+（34h / 354h / 427h）。
+
+### 四、现在的边界
+
+- commit 的机器来源**仍然只有 git 关联**（registry 与 Nexus 都 0 条 label / 无属性）。
+  **Jenkins 没找到**：GitLab 有一个空的 `jenkins` 组，但没找到 Jenkins 实例；
+  SonarQube 实例在但要认证。**若 Jenkins 可达且能只读，
+  「构建号 → commit」就是确定性的（它 checkout 了哪个 commit 是事实），值得继续找。**
+- **唯一硬阻塞仍是集群访问**（无 kubectl）：没有它就没有 `pod_started_at`，
+  也没有「现在跑的是哪个 digest」这个查询键，Agent 在真实靶子上会空转。
+- 采集器**代码在仓库内**（可审计、无内部标识符），**产物在仓库外**，
+  且 `sync-tools.mjs` 现在会**守卫「采集器不进 Agent 工作区」**。
+
+### 五、下一步（更新）
+
+1. **要集群只读访问**（Rancher 测试环境 kubeconfig 最现实）——解锁 cluster 段。
+2. `run-round.mjs` 写台账——阶段 2 剩下的另一半。
+3. 继续找 Jenkins（如果能给只读地址/凭据，commit 就不再是推断）。
+4. 内网 minimax 队列的 F2 对照轮——**等配额恢复再说**。
+5. P12 语义修（降级说明，别给「这一轮能跑完」的假信号）——仍未做。
+
+## 【2026-11-06 深夜】观测身份、`commit_reliable`、`deploy running`——以及「镜像里的代码对不上任何 commit」
+
+### 一、为什么动这三处
+
+用户拿了一个真实构建号（P2 的镜像，tag 是构建号）问「这个是不是你们环境里那份」。
+顺着这条线实测，**证明了**两件此前只是"担心"的事：
+
+1. **同一个 digest 会被重复部署/被重新观测**，而台账把它当重复**静默丢弃**；
+2. **commit 关联可以错，而且已经错了**——把真镜像里的 jar 拆出来、
+   比对打包进 `BOOT-INF/classes` 的配置文件，**对不上任何本地 ref**，
+   `git grep` 也查不到其中一个只在镜像里存在的键；
+   台账却把这条镜像关联给了 HEAD（档位 `git-head-fallback`）。也就是说：
+   **「查到了 commit」不等于「知道镜像里的代码」。**
+
+于是做了三件事（B、C，以及 B 顺带带出来的 `running`）。
+
+### 二、台账主键：从 digest 改成**观测**
+
+`collect-registry.mjs` 的 `writeEntries` 原以 digest 去重。
+后果不是"少写一行"，是**丢掉「这条镜像已经跑了多久」**——台账存在的唯一理由。
+
+现在按 `OBSERVATION_FIELDS`（cluster / namespace / workload / image_ref /
+digest / built_at / commit / commit_source / deployed_at / deployed_by /
+pod_started_at / running_observed_at / running_source）判"同一次观测"：
+
+- **同一次观测**（含 `collected_at` 不同）→ 跳过，不追加。采集器重跑不会灌重复行。
+- **同一 digest 的新观测**（重新部署、事后确认在跑）→ **追加**。
+- **同一 digest 的矛盾事实**（两个 `built_at`，或两个不同的非空 commit）→
+  **拒写 + 报错退出**，stderr 写清 `why`。矛盾是"一个问题的两个互斥答案"，不是"两次发布"。
+
+配了四条新对照（追加而非吞掉 / 矛盾拒写 / 一条观测不重复追加等），控制脚本 16 → **20/20**。
+
+### 三、`--running-now`：人工确认是一等事实，但不是 `pod_started_at`
+
+采集器新增 `--running-now` + `--running-source human|k8s`。它写入
+`running_observed_at`（本轮的单一时间戳）与 `running_source`，
+**`pod_started_at` 仍然是 `null`**——"哪个镜像在跑"和"它什么时候起来的"是两个事实，
+后者只有集群知道，采集器不编。`--running-source` 不带 `--running-now` 时**硬报错**，
+不静默忽略。
+
+### 四、`commit_reliable`：查到了也可能是错的
+
+读侧每条条目新增 `commit_reliable` / `commit_note`。判定表：
+
+| `commit_source`                | `commit_reliable` | 理由                               |
+| ------------------------------ | ----------------- | ---------------------------------- |
+| `oci-label` / `annotation`     | true              | 镜像自述，随 digest 走             |
+| `git-window`                   | **false**         | 实测 0.2h 的窗口仍然错（见第五节） |
+| `git-head-fallback`            | false             | 安静段的兜底，本来就是猜           |
+| `jenkins-parameter` / `manual` | false             | 人填的，没有机器凭据               |
+| 缺失 / `null`                  | false             | 没有关联                           |
+
+`commit_note` 明确写出「只能当线索；构建可能跑在未提交的工作区上，
+此时这个 commit 的树**并不是**镜像里的代码；**不要据此读源码并断言「这就是当时在跑的代码」**」。
+理由：之前 `git-window` 被当成"强关联"，而真实数据证明它在本项目上并不可靠——
+**档位名字好听不代表证据强度**。
+
+### 五、`deploy running`：回答「现在跑的哪个」并把出处写出来
+
+新操作 `deploy running`：只取 `running_observed_at != null` 的条目，
+输出 `observed_at` / `source` / `pod_started_at` / `running_for_seconds` / `pod_started_note`。
+**台账里一条运行态观测都没有时硬报错**（`台账缺条目：台账里没有任何运行态观测。`），
+不许"没有就说没有异常"。配了正负对照。
+
+真实台账现在 8 行：1 夹具 + 6 registry + **1 条人工确认的运行观测**
+（`running_source: human`、`pod_started_at: null`）。`deploy running` 能答
+"现在跑的是哪个 digest、是谁说的、什么时候说的"，`deploy lookup` 对这个 digest 报
+`rollouts: 2`（**同一 digest 两次观测，不是两次发布**）。
+
+### 六、实测证据：镜像里的代码对不上任何 commit（`DEPLOY-LEDGER.md` §12.6）
+
+从真实镜像层里取出 `app.jar`，解开后算打包资源的 sha256，与本地各 ref 逐一比对：
+`application.yaml` / `application-dev.yaml` / `application-prod.yaml` **全部无匹配**；
+其中一个键在**所有** ref 的 `git grep` 里都查不到，却在镜像里存在。
+**结论：这个镜像构建自一个从未提交的工作区**（或对应仓库不是本地这份）。
+这正是 `commit_reliable=false` 在真实项目上的**默认状态**，不是理论风险。
+
+### 七、状态与下一步
+
+- 控制脚本：读侧 **33/33**、写侧 **20/20**（`deploy-ledger-control.mjs`、
+  `collector-control.mjs`）。
+- **仍未做的没变**：`run-round.mjs` 写台账；采集器的 cluster 段（等集群访问）；
+  Jenkins 只读（若可达，「构建号 → commit」才是确定性事实）。
+- **集群访问到手后，`--running-source k8s` 接上即可，读侧答案形状不用改。**
+
+### 八、顺带：三件公司侧的安全问题（**只报出去，没写进本仓库**）
+
+真实镜像层里发现：一个加解密口令以**明文**躺在镜像里；打包配置里有一个内网服务地址
+明文可读；一份**明文白名单含 67 个真实员工账号**。已口头/文字告知用户，
+**完整证据与明细在仓库外**，`/tmp` 下的临时副本已删除。本仓库不留任何一项。

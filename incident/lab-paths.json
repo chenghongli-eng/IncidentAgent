@@ -5,5 +5,6 @@
   "readonlyCli": "/mnt/my-work/incident-lab/workspace/tools/incident-readonly.mjs",
   "logsDir": "/mnt/my-work/incident-lab/workspace/logs",
   "archiveDir": "/home/fs-user/incident-lab-archive",
+  "fixtureLedger": "/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/lab-ledger.jsonl",
   "repoRoot": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main"
 }
