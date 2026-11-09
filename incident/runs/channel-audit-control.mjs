@@ -202,6 +202,108 @@ try {
       `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
     );
   }
+
+  /**
+   * G/H 是 2026-11-09 加的一对，针对两个方向的错：
+   *
+   * **G（该放行的要放行）**：2026-11-04 之前 Agent 的工作区在仓库里的
+   * `incident/workspace`；那批 transcript 记的是当时的真实路径，今天按搬走后的
+   * 工作区判，全都落在证据面之外 → 当场重跑审计比 manifest 里存的多出几十条越界
+   * → 轮次被误判作废，指标表判「0 轮有效」。判定的口径必须是
+   * **按这一轮当时的面**，不是按今天的面。
+   *
+   * **H（该拦的还要拦）**：放宽成别名之后，`工作区/../x` 这种拼写不能跟着一起放行。
+   * 修 G 之前这里有个**真实的假阴性**：`isAllowed` 用前缀匹配，
+   * `…/workspace/../AGENTS.md` 的字面前缀就是 `…/workspace/`，
+   * 于是**实验室根目录下一个文件被读走却算在工作区里**。
+   * 0754Z 那轮就是这么漏的：`cat …/workspace/../AGENTS.md` 当时只报 2 处越界。
+   * 现在先做词法解析再判，`..` 爬出去照样算越界。
+   */
+  const STALE_WORKSPACE = join(ROOT, 'incident/workspace');
+
+  // G1 旧工作区位置（bash）
+  {
+    const p = fixture(dir, 'g-stale-workspace-bash', [
+      {
+        name: 'bash',
+        args: {
+          command: `cd ${STALE_WORKSPACE} && node tools/incident-readonly.mjs metrics alerts`,
+        },
+      },
+    ]);
+    const r = runAudit(p);
+    check(
+      'G1 旧工作区位置的正常观测 → exit 0，0 污染 0 越界，且披露用了旧位置',
+      r.code === 0 &&
+        r.contaminating === 0 &&
+        r.out_of_surface === 0 &&
+        r.stale_workspace_uses >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface} 旧位置=${r.stale_workspace_uses}`,
+    );
+  }
+
+  // G2 旧工作区位置（read 工具）
+  {
+    const p = fixture(dir, 'g-stale-workspace-read', [
+      {
+        name: 'read',
+        args: { path: `${STALE_WORKSPACE}/tools/incident-readonly.mjs` },
+      },
+    ]);
+    const r = runAudit(p);
+    check(
+      'G2 旧工作区位置的 read → exit 0，0 污染 0 越界，且披露用了旧位置',
+      r.code === 0 &&
+        r.contaminating === 0 &&
+        r.out_of_surface === 0 &&
+        r.stale_workspace_uses >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface} 旧位置=${r.stale_workspace_uses}`,
+    );
+  }
+
+  // H0 正对照：工作区里的一份文件（没有 `..`）
+  {
+    const p = fixture(dir, 'h0-inside', [
+      { name: 'bash', args: { command: `cat ${WORKSPACE}/AGENTS.md` } },
+    ]);
+    const r = runAudit(p);
+    check(
+      'H0 工作区内的文件 → exit 0，0 越界（H 的正对照）',
+      r.code === 0 && r.contaminating === 0 && r.out_of_surface === 0,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  // H `..` 爬出工作区：字面前缀相同，但它读到的是工作区之外的文件
+  {
+    const p = fixture(dir, 'h-dotdot-escape', [
+      { name: 'bash', args: { command: `cat ${WORKSPACE}/../AGENTS.md` } },
+    ]);
+    const r = runAudit(p);
+    check(
+      'H 工作区加 `..` 爬出去 → 报越界 ≥ 1（前缀相同不等于在面内）',
+      r.code === 0 && r.contaminating === 0 && r.out_of_surface >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  // H2 旧工作区位置加 `..` 读答案键：别名不能成为后门
+  {
+    const p = fixture(dir, 'h2-stale-dotdot', [
+      {
+        name: 'bash',
+        args: {
+          command: `cat ${STALE_WORKSPACE}/../runs/ground-truth/F2.json`,
+        },
+      },
+    ]);
+    const r = runAudit(p);
+    check(
+      'H2 旧工作区加 `..` 读答案键 → exit 1，且污染 ≥ 1',
+      r.code === 1 && r.contaminating >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

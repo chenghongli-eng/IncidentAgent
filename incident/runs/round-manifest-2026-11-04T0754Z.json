@@ -104,10 +104,19 @@
     "transcript": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/data/sessions/flow-mvkttud1-ah1b/.claude/sessions/2026-11-04T08-13-34-994Z_01a1a59e-df92-7890-815b-b47df035f4a1.jsonl",
     "tool_calls": 39,
     "contaminating": 0,
-    "out_of_surface": 2,
+    "out_of_surface": 3,
     "stale_path_uses": 0,
+    "stale_workspace_uses": 0,
     "verdict": "out_of_surface",
     "findings": [
+      {
+        "level": "out_of_surface",
+        "tool": "bash",
+        "token": "/mnt/my-work/incident-lab/workspace/../AGENTS.md",
+        "why": "绝对路径在证据面之外",
+        "at": "2026-11-04T08:13:38.925Z",
+        "excerpt": "cat /mnt/my-work/incident-lab/workspace/../AGENTS.md 2>/dev/null; ls -la /mnt/my-work/incident-lab/; find /mnt/my-work/incident-lab -maxdepth 3 -iname \"AGENTS.md\" -o -maxdepth 3 -iname \"CLAUDE.md\""
+      },
       {
         "level": "out_of_surface",
         "tool": "bash",
@@ -151,5 +160,6 @@
     "model": "deepseek-v4-flash[1m]",
     "enabledCount": 2
   },
-  "finished_at": "2026-11-04T08:17:17.637Z"
+  "finished_at": "2026-11-04T08:17:17.637Z",
+  "channel_audit_note": "2026-11-09 用修好的 channel-audit.mjs 重跑：污染仍是 0，越界从 2 变成 3。多出来的那一条是 `cat …/incident/workspace/../AGENTS.md`——它的字面前缀是工作区，但解析后读到的是工作区**上一层**的实验室根目录。旧版 `isAllowed` 用前缀匹配、不解析 `..`，于是这一条当时**一条记录都没有**：读到了证据面之外的文件，审计却说干净。仍是越界而不是污染（实验室根目录不是答案键），所以这一轮的判定不变。本条同时把旧版没有的 `stale_workspace_uses` 补进记录：0 表示这一轮没走搬迁前的工作区位置。"
 }

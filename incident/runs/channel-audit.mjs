@@ -76,6 +76,27 @@ const CONTAMINATING = [
 const STALE_ROOT =
   '/persistent/home/fs-user/IdeaProjects/ai_coding/study/miniclaw-main/miniclaw-main';
 
+/**
+ * 工作区搬出仓库之前的旧位置（2026-11-04）。
+ *
+ * 性质和 STALE_ROOT 一样是**别名**：工作区是**搬**走的（不是复制一份留下），
+ * 旧位置现在不存在，所以 `incident/workspace/...` 与现在的 `WORKSPACE/...`
+ * 是同一批文件。
+ *
+ * 为什么必须认这个别名：2026-11-04 之前的那些轮次，Agent 的工作区**当时**
+ * 就在这个位置，transcript 里记的也是这个路径（提交时脱敏成
+ * `<repo>/incident/workspace`）。今天按 `WORKSPACE` 判，它们全落在证据面之外
+ * → 当场重跑的审计比 manifest 里存的那份多出几十条越界 → 轮次被误判作废，
+ * 指标表于是判「0 轮有效」，而 2026-11-02 的存档写的是「有效 3 轮」。
+ *
+ * 判定的口径因此是：**按这一轮当时的面来判**，不是按今天的面。
+ *
+ * 注意它**不是后门**：别名只把旧工作区位置映射到当前工作区，
+ * 答案键目录（`incident/faults`、`incident/runs`…）不在工作区里，
+ * 从旧位置绕过去照样判污染（见 `classifyPath` 里的答案键检查）。
+ */
+const STALE_WORKSPACE = join(ROOT, 'incident/workspace');
+
 /** 台子自己的文件：读了不直接是答案，但超出了证据面。 */
 const OUT_OF_SURFACE = [
   { token: '/incident/lab.sh', why: '台子脚本，不是诊断证据' },
@@ -193,18 +214,48 @@ function absolutePaths(text) {
   return [...out];
 }
 
-function isAllowed(abs) {
-  if (ALLOWED_ROOTS.some((root) => abs === root || abs.startsWith(root + '/')))
-    return true;
-  // 旧根是同一批文件的别名：旧根下与当前 ROOT 同名的路径视同 ROOT 下的路径。
-  if (abs === STALE_ROOT || abs.startsWith(STALE_ROOT + '/')) {
-    const rel = abs.slice(STALE_ROOT.length) || '/';
-    const cur = join(ROOT, rel);
-    return ALLOWED_ROOTS.some(
-      (root) => cur === root || cur.startsWith(root + '/'),
-    );
+/**
+ * 词法解析：消掉 `.` 与 `..`、重复斜杠和尾斜杠。
+ *
+ * 为什么必须先做这一步再判别名：`incident/workspace/../runs` 里的 `..`
+ * 会爬出旧工作区位置，落回仓库里的答案键目录。先把 `..` 算清楚，
+ * 别名映射才不会把「从旧工作区爬出去读答案键」误判成「工作区内部」。
+ */
+function lexical(p) {
+  const out = [];
+  for (const seg of p.split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      out.pop();
+      continue;
+    }
+    out.push(seg);
   }
-  return false;
+  return '/' + out.join('/');
+}
+
+/**
+ * 归一成「这批文件现在在哪」。
+ *
+ * 旧仓库根 → 当前仓库根；旧工作区位置 → 当前工作区。
+ * 顺序不能反：旧根下的 `incident/workspace` 要先落到当前根，才认得出工作区别名。
+ */
+function canonical(p) {
+  let abs = lexical(p);
+  if (abs === STALE_ROOT || abs.startsWith(STALE_ROOT + '/')) {
+    abs = lexical(join(ROOT, abs.slice(STALE_ROOT.length) || '/'));
+  }
+  if (abs === STALE_WORKSPACE || abs.startsWith(STALE_WORKSPACE + '/')) {
+    abs = lexical(join(WORKSPACE, abs.slice(STALE_WORKSPACE.length) || '/'));
+  }
+  return abs;
+}
+
+function isAllowed(abs) {
+  const cur = canonical(abs);
+  return ALLOWED_ROOTS.some(
+    (root) => cur === root || cur.startsWith(root + '/'),
+  );
 }
 
 /**
@@ -289,16 +340,16 @@ function pathCandidates(segment) {
  */
 function classifyPath(resolved, mode = 'read') {
   /**
-   * 旧根先归一成当前根再判答案键。
+   * 别名先归一再判答案键。
    *
-   * 旧根是同一批文件的别名（仓库搬家前的路径），`isAllowed` 已经按别名处理，
+   * 旧根与旧工作区位置都是同一批文件的别名，`isAllowed` 已经按别名处理，
    * 但答案键是按当前根写死的——不归一的话，从旧根读同一个答案键文件
    * 会被判成「只是越界」，等于给旧根开了一个后门。
+   *
+   * 归一之前先做词法解析（`..` 要算清楚）：`incident/workspace/../runs`
+   * 爬出的是**答案键**，不是工作区内部。
    */
-  const norm =
-    resolved === STALE_ROOT || resolved.startsWith(STALE_ROOT + '/')
-      ? join(ROOT, resolved.slice(STALE_ROOT.length) || '/')
-      : resolved;
+  const norm = canonical(resolved);
   for (const { dir, why } of ANSWER_KEY_DIRS) {
     if (norm === dir || norm.startsWith(dir + '/')) {
       if (mode === 'read')
@@ -372,6 +423,25 @@ const findings = [];
 const byKey = new Map();
 let staleUses = 0;
 let staleExample = null;
+let staleWorkspaceUses = 0;
+
+/**
+ * 这个路径是不是「工作区搬出仓库之前的旧位置」。
+ *
+ * 用来披露，不用来判废：那一轮跑的时候工作区**就在**那个位置，
+ * 今天它搬走了，transcript 里记的路径因此看起来在证据面之外。
+ * 判定的口径是「按那一轮当时的面」，所以它算别名、放行；
+ * 但「这个路径今天已经不存在了」这件事要写出来，
+ * 免得读报告的人以为 Agent 一直用的是今天这个位置。
+ */
+function staleWorkspaceUse(p) {
+  const raw = lexical(p);
+  const mapped = canonical(p);
+  return (
+    mapped !== raw &&
+    (mapped === WORKSPACE || mapped.startsWith(WORKSPACE + '/'))
+  );
+}
 
 /**
  * 记一条发现。
@@ -585,8 +655,6 @@ for (const call of calls) {
     }
     const p = String(call.args.path ?? '');
     if (!p) continue;
-    const oosFlagged = OUT_OF_SURFACE.some((rule) => text.includes(rule.token));
-    if (alreadyFlagged || oosFlagged) continue;
     const resolved =
       p.startsWith('<repo>') || p.startsWith('<home>')
         ? unredact(p)
@@ -595,6 +663,11 @@ for (const call of calls) {
           : p.startsWith('/')
             ? p
             : resolveRelative(WORKSPACE, p);
+    // 披露要在早退之前计数：这条调用后面可能被文本规则接管，
+    // 但「用的是工作区搬走前的旧位置」这件事照样发生过。
+    if (staleWorkspaceUse(resolved)) staleWorkspaceUses++;
+    const oosFlagged = OUT_OF_SURFACE.some((rule) => text.includes(rule.token));
+    if (alreadyFlagged || oosFlagged) continue;
     const hit = classifyPath(resolved, 'read');
     if (hit) addRelFinding(hit.level, resolved, hit.why);
   }
@@ -613,6 +686,7 @@ for (const call of calls) {
 
   if (call.name === 'bash') {
     for (const abs of absolutePaths(text)) {
+      if (staleWorkspaceUse(abs)) staleWorkspaceUses++;
       // 旧根要在 isAllowed 之前判：旧根下的合法路径虽然放行，
       // 但它暴露的是「环境没迁完」，必须聚合成一条披露。
       if (abs === STALE_ROOT || abs.startsWith(STALE_ROOT + '/')) {
@@ -626,6 +700,34 @@ for (const call of calls) {
       }
       if (isAllowed(abs)) continue;
       if (/\.(jsonl|db)$/.test(abs)) continue; // 自己的会话 transcript 不算越界
+      /**
+       * 绝对路径也可能用 `..` 拼出答案键：`…/workspace/../runs/ground-truth/F2.json`。
+       *
+       * 文本规则按子串匹配 `/incident/runs`，这种拼写匹配不上；先修的那个前缀
+       * 假阴性（`isAllowed` 不解析 `..`）又让它连越界都不报。两层加起来就是
+       * **读到了答案键、却一条记录都没有**。
+       *
+       * 所以这里按解析后的绝对路径再判一次答案键。只在文本规则没报过这个调用时判
+       * （`alreadyFlagged`）：报过的再报一遍会让同一件事算两处，计数也跟着变。
+       */
+      if (!alreadyFlagged) {
+        const seg = text.split(/[;&|]\s*|\n/).find((s) => s.includes(abs));
+        const keyHit = classifyPath(
+          abs,
+          seg ? segmentMode(seg.trim()) : 'read',
+        );
+        if (keyHit && keyHit.answerKey) {
+          addFinding(`${call.id}:abs:${abs}`, {
+            level: keyHit.level,
+            tool: call.name,
+            token: abs,
+            why: keyHit.why,
+            at: call.ts,
+            excerpt: text.replace(/\s+/g, ' ').slice(0, 200),
+          });
+          continue;
+        }
+      }
       findings.push({
         level: 'out_of_surface',
         tool: call.name,
@@ -680,6 +782,14 @@ const result = {
   contaminating: contaminating.length,
   out_of_surface: findings.filter((f) => f.level === 'out_of_surface').length,
   stale_path_uses: staleUses,
+  /**
+   * 引用「工作区搬出仓库前的旧位置」的次数。
+   *
+   * 不计入越界：那一轮跑的时候工作区**就在**那个位置，transcript 里记的
+   * 是当时的真实路径；按「这一轮当时的面」判，它是证据面之内。
+   * 单独记一个数，是为了在复核件里说清楚「这轮用的是旧位置」。
+   */
+  stale_workspace_uses: staleWorkspaceUses,
   verdict: contaminating.length
     ? 'contaminated'
     : findings.length
@@ -695,6 +805,12 @@ if (asJson) {
   console.log(
     `工具调用 ${calls.length} 次｜污染 ${contaminating.length} 处｜越界 ${result.out_of_surface} 处`,
   );
+  if (staleWorkspaceUses) {
+    console.log(
+      `说明：有 ${staleWorkspaceUses} 次引用的是工作区搬出仓库前的旧位置` +
+        `（同一批文件的别名，按这一轮当时的面判，不算越界）`,
+    );
+  }
   console.log(`判定：${result.verdict}\n`);
   for (const f of findings) {
     console.log(
