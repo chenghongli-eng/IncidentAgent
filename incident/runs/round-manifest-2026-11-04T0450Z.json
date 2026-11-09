@@ -1,6 +1,7 @@
 {
   "stamp": "2026-11-04T0450Z",
   "fault": "F4",
+  "dry_run": false,
   "started_at": "2026-11-04T04:50:31.037Z",
   "preflight": [
     {

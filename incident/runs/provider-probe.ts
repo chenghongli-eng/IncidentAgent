@@ -54,6 +54,12 @@ const NONCES = {
 const QUESTION =
   '载荷最后一行是 PAYLOAD-END-<字节数>-<标记>。请只回答 PAYLOAD-END- 后面那串大写字母和数字，不要解释。';
 
+// 探针自己的输出预算。模型回答前要先花 thinking token（实测 ~225），
+// 预算给小了会在思考阶段就用完 → 回复里没有回显 → 探针误判成
+// 「provider 没接住」。所以给 512；仍然用完就换一个更大的预算再问一次。
+const PROBE_MAX_TOKENS = 512;
+const PROBE_RETRY_MAX_TOKENS = 2048;
+
 /**
  * 「一轮的规模」怎么量：不猜，取**上一轮实际发生过的事**。
  *
@@ -194,6 +200,7 @@ function extractText(body: string): string {
  */
 async function probeDirect(
   prompt: string,
+  maxTokens: number,
 ): Promise<Record<string, unknown> | null> {
   const config = getClaudeProviderConfig();
   if (!config.anthropicBaseUrl) return null;
@@ -225,10 +232,11 @@ async function probeDirect(
         // `payload_not_echoed`。那是**假阴性**：provider 其实完全接得住这一轮
         // 规模，探针却把好轮次拦了下来。
         //
-        // 所以这里给 512，并且把 `stop_reason` 一起记下来：探针自己的预算用完
+        // 所以预算给到 512（不够就换一个更大的再问一次，见 main() 里的自查重试），
+        // 并且把 `stop_reason` 一起记下来：探针自己的预算用完
         // （`max_tokens`）和「平台把上下文截断了」是两回事，混在一起报就会把
         // 探针自己的锅算到 provider 头上。
-        max_tokens: 512,
+        max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -281,7 +289,28 @@ async function main(): Promise<void> {
 
   const startedAt = Date.now();
   let result: Record<string, unknown>;
-  const direct = await probeDirect(prompt);
+  let direct = await probeDirect(prompt, PROBE_MAX_TOKENS);
+  // 探针自己的输出预算用完了（stop_reason=max_tokens）——这是**探针的锅**，
+  // 不是 provider 接不住。此时的回答是「没量到」，不是「不行」。
+  //
+  // 所以这里换个更大的预算再问一次，而不是就此把一个接得住的轮次拦下来。
+  // 重试只发生在「探针答不出来」的时候（罕见），代价是一次同样规模的请求；
+  // 换来的是闸门不再有这一类假阴性——2026-11-06 实测过这一类假阴性，
+  // 它当时把一个完全接得住的轮次挡在了门外。
+  let probeRetry: Record<string, unknown> | null = null;
+  if (
+    direct !== null &&
+    direct.ok === true &&
+    direct.stop_reason === 'max_tokens' &&
+    direct.payload_echoed !== 'full'
+  ) {
+    probeRetry = {
+      reason: 'probe_output_budget_exhausted',
+      first_max_tokens: PROBE_MAX_TOKENS,
+      retry_max_tokens: PROBE_RETRY_MAX_TOKENS,
+    };
+    direct = await probeDirect(prompt, PROBE_RETRY_MAX_TOKENS);
+  }
   if (direct === null) {
     // 直接通道不可用（没配 baseUrl / 没配 token / 没配模型）：退回已知路径。
     const answer = await sdkQuery(prompt, { timeout: 180_000 });
@@ -354,6 +383,7 @@ async function main(): Promise<void> {
         approx_input_tokens: Math.round(payload.length / 4),
         reference_round_bytes: targetBytes,
         reference_round_source: round.source,
+        ...(probeRetry ? { probe_retry: probeRetry } : {}),
         ...result,
       },
       null,

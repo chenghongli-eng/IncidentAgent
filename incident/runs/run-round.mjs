@@ -65,6 +65,12 @@ const { readRunningImage } = await import(
 const { writeEntries } = await import(
   new URL('../collector/ledger.mjs', import.meta.url).href
 );
+const { resolveTarget, targetProfile, applicationLabel } = await import(
+  new URL('../targets/descriptor.mjs', import.meta.url).href
+);
+const { realTargetPreflight, realDeps } = await import(
+  new URL('./target-preflight.mjs', import.meta.url).href
+);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const LAB = join(ROOT, 'incident');
@@ -93,12 +99,7 @@ const WORKSPACE = LAB_PATHS.workspaceRoot;
  */
 const FIXTURE_LEDGER = LAB_PATHS.fixtureLedger;
 const WS_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
-const TARGET = 'http://127.0.0.1:8080';
-const PROM = 'http://127.0.0.1:9090';
 const MINICLAW = 'http://127.0.0.1:3000';
-const RATIO_QUERY =
-  'sum(rate(http_server_requests_seconds_count{application="target-service",status=~"5.."}[1m]))' +
-  '/clamp_min(sum(rate(http_server_requests_seconds_count{application="target-service"}[1m])),0.001)';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -106,6 +107,29 @@ const opt = (name, dflt) => {
   const i = args.indexOf(name);
   return i === -1 ? dflt : args[i + 1];
 };
+
+/**
+ * 这一轮打的是哪个靶子。
+ *
+ * 默认是合成夹具（内置默认值，与改动前逐字一致）。给了描述文件就是真实靶子：
+ * 描述文件在仓库外（`--target <路径|名字>`，或 INCIDENT_TARGET_FILE /
+ * INCIDENT_TARGET 环境变量）。
+ *
+ * 注意：**没有描述文件时环境变量一律不生效**。夹具那边的通道是写死的，
+ * 让 PROMETHEUS_URL 之类悄悄改掉它，等于让夹具轮次在别的靶子上跑——
+ * 那比「跑不起来」难查得多。
+ */
+const TARGET_SPEC = opt('--target', null);
+const DESCRIPTOR = resolveTarget(TARGET_SPEC);
+const PROFILE = targetProfile(DESCRIPTOR, DESCRIPTOR ? process.env : {});
+const REAL_MODE = PROFILE.mode === 'descriptor';
+
+const TARGET = PROFILE.actuatorBaseUrl;
+const PROM = PROFILE.prometheusUrl;
+const APP_LABEL = applicationLabel(PROFILE);
+const RATIO_QUERY =
+  `sum(rate(http_server_requests_seconds_count{application="${APP_LABEL}",status=~"5.."}[1m]))` +
+  `/clamp_min(sum(rate(http_server_requests_seconds_count{application="${APP_LABEL}"}[1m])),0.001)`;
 
 const FAULT = opt('--fault', 'F4');
 const DRY_RUN = flag('--dry-run');
@@ -128,9 +152,20 @@ const SETTLE_MS = Number(opt('--settle-ms', 18 * 60 * 1000));
 
 const now = new Date();
 const STAMP = `${now.toISOString().slice(0, 10)}T${now.toISOString().slice(11, 16).replace(':', '')}Z`;
-const REPORT_PATH = join(RUNS, `agent-report-${STAMP}.md`);
-const SCORE_PATH = join(RUNS, `score-${STAMP}.json`);
-const MANIFEST_PATH = join(RUNS, `round-manifest-${STAMP}.json`);
+/**
+ * 轮次产物落在哪。
+ *
+ * 合成夹具的轮次产物进仓库（它们是量具的历史证据）。**真实靶子的轮次产物不进
+ * 仓库**：它们讲的是真实项目，属于仓库外的证据——仓库是公开的，真实项目的
+ * 端口、路径、台账都不该跟着一份 manifest 进去。
+ */
+const OUT_DIR = REAL_MODE
+  ? join(LAB_PATHS.archiveDir, 'lab-data', 'rounds')
+  : RUNS;
+mkdirSync(OUT_DIR, { recursive: true });
+const REPORT_PATH = join(OUT_DIR, `agent-report-${STAMP}.md`);
+const SCORE_PATH = join(OUT_DIR, `score-${STAMP}.json`);
+const MANIFEST_PATH = join(OUT_DIR, `round-manifest-${STAMP}.json`);
 
 const log = (...a) => console.log(...a);
 const section = (t) =>
@@ -278,8 +313,31 @@ function digAgentApiErrors(agentStartIso) {
 
 const manifest = {
   stamp: STAMP,
-  fault: FAULT,
-  dry_run: false,
+  // 真实靶子轮次没有合成夹具的故障类型——写「none」，别写 F4：
+  // 那一栏写着 F4，读的人会以为这一轮真的注入过 F4。
+  fault: REAL_MODE ? 'none（真实靶子不注入合成故障）' : FAULT,
+  /**
+   * 这一轮打的是哪个靶子。合成夹具是 builtin（没有描述文件），真实靶子是
+   * descriptor（描述文件在仓库外，所以这里只有代号与路径，不含任何内部信息）。
+   */
+  target: {
+    mode: PROFILE.mode,
+    id: PROFILE.id,
+    application: APP_LABEL,
+    descriptor_file: PROFILE.descriptorFile,
+    prometheus_url: PROFILE.prometheusUrl,
+    actuator_url: PROFILE.actuatorBaseUrl,
+  },
+  // dry_run 必须在**建 manifest 的时候**就写对，不能等到 dry-run 分支末尾
+  // 才置 true。
+  //
+  // 原因：dry-run 在中途失败（服务不通之类）时，走的是中止分支，压根到不了
+  // 那个置 true 的地方——留下的 manifest 就自称「不是 dry-run」，读起来像
+  // 一轮真跑的成绩。中止的那次实测就是这样：dry_run=false、round_valid=false，
+  // 靠 invalid_reason 才看得出它中止了。
+  //
+  // 「跑没跑」和「跑没跑完」是两件事：这个字段答的是前者，所以一开始就得准。
+  dry_run: DRY_RUN,
   started_at: now.toISOString(),
   preflight: [],
   setup: null,
@@ -353,22 +411,53 @@ function probeFailureMessage(id, m, run) {
     `  探测规模：${m.payload_bytes ?? '?'} 字节` +
     `（约 ${m.approx_input_tokens ?? '?'} token，基准：${m.reference_round_source ?? '?'}）\n`;
   const tail = `  退出码 ${run.exit}；stderr：${run.stderr_tail || '（无）'}\n`;
+  // stop_reason 必须**显式**报出来：它区分「平台把上下文截断了」和
+  // 「探针自己的输出预算用完了」。不报这一项，两种截断就得靠人猜。
+  const stop =
+    `  stop_reason：${m.stop_reason ?? '(没拿到)'}` +
+    `；载荷回显：${m.payload_echoed ?? '(没拿到)'}\n`;
+  const retry = m.probe_retry
+    ? `  探针已自查重试：第一次 max_tokens=${m.probe_retry.first_max_tokens}` +
+      ` 用尽，重试用 ${m.probe_retry.retry_max_tokens}（${m.probe_retry.reason}）\n`
+    : '';
   if (m.failure_class === 'probe_output_truncated') {
     return (
       `${id} 探针自己的输出预算用完了（stop_reason=max_tokens）——**不是 provider 的问题**。\n` +
       size +
+      stop +
+      retry +
       tail +
       '  这是探针的假阴性：模型的思考 token 吃掉了 max_tokens，回复里没来得及回显标记。\n' +
-      '  先把 provider-probe.ts 的 max_tokens 调大再重跑，不要当成额度故障。'
+      '  探针已经自查重试过一次还是这样——先把 provider-probe.ts 的 max_tokens 调大再重跑，' +
+      '不要当成额度故障。'
     );
   }
   return (
     `${id}：provider 接不住一轮规模的请求（可能是额度/限流）。\n` +
     `  失败分类：${m.failure_class ?? '(没拿到分类)'}\n` +
     size +
+    stop +
+    retry +
     tail +
     '  这是环境的问题（额度/限流），不是 Agent 的问题——别记到它头上。\n'
   );
+}
+
+/**
+ * 探测通过时也要报 stop_reason。
+ *
+ * 「通过了」和「通过了而且不是被预算截断糊弄过去的」是两件事：
+ * 只有把 stop_reason 和回显情况写进闸门记录，事后翻 manifest 才分得清
+ * 这一条到底证明了什么。P12 和 P12b 两处都写——开跑前那一次如果漏了，
+ * 前面那一处的判据就用不上。
+ */
+function probeVerdictNote(m) {
+  const stop = m.stop_reason ?? '(没拿到)';
+  const echoed = m.payload_echoed ?? '(没拿到)';
+  const retried = m.probe_retry
+    ? `，探针自查重试过（max_tokens ${m.probe_retry.first_max_tokens}→${m.probe_retry.retry_max_tokens}）`
+    : '';
+  return `stop_reason=${stop}，载荷回显=${echoed}${retried}`;
 }
 
 /**
@@ -554,18 +643,36 @@ function publishLedgerEnv(folder) {
       fail(`工作区环境配置文件读不出来：${file}（${err.message}）`);
     }
   }
-  const customEnv = {
-    ...(cfg.customEnv ?? {}),
-    DEPLOY_LEDGER: FIXTURE_LEDGER,
-  };
+  const customEnv = { ...(cfg.customEnv ?? {}) };
+  let ledger = FIXTURE_LEDGER;
+  if (REAL_MODE) {
+    // 真实靶子：台账是真实项目的台账（在仓库外），通道地址也要按实测指过去。
+    //
+    // 日志目录用**实测**的（靶子进程自己持有的那些日志文件所在目录），
+    // 而不是描述文件里写的那个——描述文件过期时，Agent 会读到一份停在
+    // 最后一次启动的旧日志，而且读起来毫无异样。
+    ledger = PROFILE.ledgerPath;
+    customEnv.DEPLOY_LEDGER = ledger;
+    customEnv.PROMETHEUS_URL = PROFILE.prometheusUrl;
+    customEnv.TARGET_URL = PROFILE.actuatorBaseUrl;
+    if (PROFILE.measuredLogsDir) customEnv.LOG_DIR = PROFILE.measuredLogsDir;
+  } else {
+    customEnv.DEPLOY_LEDGER = ledger;
+    // 夹具轮次要把真实靶子那一轮留下的通道地址**擦掉**。
+    // 否则下一轮夹具的 Agent 会去读真实靶子的日志、查真实靶子的 Prometheus——
+    // 合成夹具的证据里混进真实项目的日志，而且不报错。
+    for (const key of ['PROMETHEUS_URL', 'TARGET_URL', 'LOG_DIR']) {
+      delete customEnv[key];
+    }
+  }
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify({ ...cfg, customEnv }, null, 2)}\n`);
   // 台账文件先建出来（可以是空的）：Agent 问「现在跑的是哪次发布」时，
   // 拿到的是「台账里没有这一条」——**没查到**；而不是「文件不存在」这种崩溃。
   // 这两种都还算「没查到」，但前者能继续问下去。
-  mkdirSync(dirname(FIXTURE_LEDGER), { recursive: true });
-  if (!existsSync(FIXTURE_LEDGER)) writeFileSync(FIXTURE_LEDGER, '');
-  log(`  台账路径已交给 Agent：DEPLOY_LEDGER=${FIXTURE_LEDGER}`);
+  mkdirSync(dirname(ledger), { recursive: true });
+  if (!existsSync(ledger)) writeFileSync(ledger, '');
+  log(`  台账路径已交给 Agent：DEPLOY_LEDGER=${ledger}`);
   return file;
 }
 
@@ -851,8 +958,50 @@ const FAULTS = {
   },
 };
 
+/**
+ * 真实靶子轮次的「故障规格」。
+ *
+ * 合成夹具那套规格注入的是**合成靶子的缺陷**（改源码、改旋钮、重建容器）。
+ * 真实靶子上没有这一套：真实项目的注入手段是另一件事（REAL-TARGET.md 第 2 步），
+ * 还没做。所以这里给一个**什么都不注入**的规格，并把「没有注入故障」这件事
+ * 写进 manifest——不让任何人把一轮「没炸的」轮次读成「测过了」。
+ */
+const REAL_SPEC = {
+  title: '真实靶子（不注入合成故障）',
+  async checkWindow() {
+    return { skipped: true, reason: '真实靶子没有合成夹具的故障窗口' };
+  },
+  async setup() {
+    throw new Error(
+      '真实靶子轮次还没有实现故障注入（见 REAL-TARGET.md 第 2 步）',
+    );
+  },
+  async inject() {
+    throw new Error(
+      '真实靶子轮次还没有实现故障注入（见 REAL-TARGET.md 第 2 步）',
+    );
+  },
+  async restore() {
+    return { skipped: true };
+  },
+};
+
 async function main() {
-  const spec = FAULTS[FAULT];
+  // 真实靶子的轮次现在只允许 dry-run。
+  //
+  // 为什么明确拒绝而不是「照跑一个没有故障的轮次」：那种轮次跑出来的报告
+  // 看起来和有故障的轮次一模一样，读的人看不出这一轮**什么都没测**——
+  // 这正是实验室最怕的那种「看起来有结论」的轮次。
+  if (REAL_MODE && !DRY_RUN) {
+    fail(
+      '真实靶子的轮次目前只支持 --dry-run。\n' +
+        '  原因：真实靶子没有合成夹具那套故障注入（改源码/改旋钮/重建容器），\n' +
+        '  真实项目的注入手段是另一件事，见 incident/REAL-TARGET.md 第 2 步。\n' +
+        '  没有故障的一轮不是成绩——它只是证明台子能跑起来。',
+    );
+  }
+
+  const spec = REAL_MODE ? REAL_SPEC : FAULTS[FAULT];
   if (!spec)
     fail(
       `还没实现的故障类型：${FAULT}。当前支持：${Object.keys(FAULTS).join(', ')}`,
@@ -864,78 +1013,96 @@ async function main() {
   // ───────────────────────────────────────────────────────────
   section('前置闸门');
 
-  if (!existsSync(LAB_ENV)) fail(`旋钮文件不存在：${LAB_ENV}`);
-
-  const ps = mustSh(`docker ps --format '{{.Names}}\t{{.Status}}'`);
-  const containers = Object.fromEntries(
-    ps.out
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => {
-        const [n, ...rest] = l.split('\t');
-        return [n, rest.join('\t')];
-      }),
-  );
-  for (const name of [
-    'target-service',
-    'incident-prometheus',
-    'incident-alertmanager',
-  ]) {
-    if (!containers[name])
-      fail(`容器 ${name} 没在跑。开跑前先 incident/lab.sh up -d。`);
-  }
-  record('P1', true, `三个容器都在跑：${Object.keys(containers).join(', ')}`);
-
-  const mounts = mustSh(
-    `docker inspect target-service --format '{{range .Mounts}}{{.Source}}->{{.Destination}} {{end}}'`,
-  );
-  if (!mounts.out.includes(WORKSPACE)) {
-    fail(
-      `target-service 的挂载源不在工作区路径下：${mounts.out}\n期望挂载源 = ${WORKSPACE}/logs（工作区 2026-11-04 已搬到仓库外，见 incident/lab-paths.json）。`,
-    );
-  }
-  record('P2', true, `挂载源指向工作区：${mounts.out}`);
-
-  // 日志文件必须真的在增长——容器 healthy 但日志文件不增长是搬家的静默损坏之一
-  const appLog = join(WORKSPACE, 'logs/app.log');
-  const stat1 = sh(`stat -c '%s' ${appLog}`);
-  if (stat1.code !== 0) fail(`读不到 ${appLog}：${stat1.err}`);
-  await sleep(3000);
-  const size1 = Number(stat1.out);
-  const size2 = Number(sh(`stat -c '%s' ${appLog}`).out);
-  if (!(size2 > size1)) {
-    fail(
-      `app.log 3 秒内没有增长（${size1} → ${size2}）。容器 healthy 不代表日志通道活着——文件属主不对时容器会退回 stdout。`,
-    );
-  }
-  record('P3', true, `app.log 在增长（${size1} → ${size2} 字节）`);
-
-  // 基线 5xx 比例必须为 0。**必须在下面那次 order2 探针之前测**——
-  // 探针本身会产生一次 500，会把 1 分钟窗口的比例顶到 0.006。
-  // 所以这里等一小会儿让窗口滚过去：上一轮/上一次 dry-run 留下的那一次 500
-  // 会自然滚出窗口；而真实残留的故障态会让比例一直不降，等完就中止。
-  const baselineRatio = await readRatio();
-  if (baselineRatio !== 0) {
-    log(`  基线 5xx 比例 ${baselineRatio}，等窗口滚出上一次探针的残留…`);
-    if (!(await waitHealthyBaseline(90000))) {
+  if (REAL_MODE) {
+    // 真实靶子用另一套前置闸门（问的问题不一样，见 runs/target-preflight.mjs）。
+    const { gates, facts } = await realTargetPreflight(PROFILE, realDeps);
+    manifest.target = { ...manifest.target, facts };
+    // 实测出来的日志目录（靶子进程自己持有的那些日志文件在哪）。
+    // 交给 Agent 的是它，不是描述文件里那个可能已经过期的路径。
+    PROFILE.measuredLogsDir = facts.measured_logs_dir;
+    manifest.deploy_ledger = { ledger: PROFILE.ledgerPath, entries: [] };
+    for (const g of gates) record(g.id, g.ok, g.detail);
+    const failed = gates.filter((g) => !g.ok);
+    if (failed.length) {
       fail(
-        `基线 5xx 比例 90 秒内没回到 0（当前 ${await readRatio()}）。上一轮故障态没清干净。`,
+        `真实靶子的前置闸门没过（${failed.map((g) => g.id).join(', ')}）：\n` +
+          failed.map((g) => `  ${g.id}：${g.detail}`).join('\n'),
       );
     }
-  }
-  record('P4', true, '基线 5xx 比例 = 0');
+  } else {
+    if (!existsSync(LAB_ENV)) fail(`旋钮文件不存在：${LAB_ENV}`);
 
-  const alerts0 = await json(`${PROM}/api/v1/alerts`);
-  if (
-    alerts0.data.alerts.some(
-      (a) => a.labels?.alertname === 'HighServerErrorRate',
-    )
-  ) {
-    fail(
-      '开跑前 HighServerErrorRate 已经在 firing。实验台不干净，这一轮的结果不可用。',
+    const ps = mustSh(`docker ps --format '{{.Names}}\t{{.Status}}'`);
+    const containers = Object.fromEntries(
+      ps.out
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const [n, ...rest] = l.split('\t');
+          return [n, rest.join('\t')];
+        }),
     );
-  }
-  record('P5', true, '开跑前没有告警在 firing');
+    for (const name of [
+      'target-service',
+      'incident-prometheus',
+      'incident-alertmanager',
+    ]) {
+      if (!containers[name])
+        fail(`容器 ${name} 没在跑。开跑前先 incident/lab.sh up -d。`);
+    }
+    record('P1', true, `三个容器都在跑：${Object.keys(containers).join(', ')}`);
+
+    const mounts = mustSh(
+      `docker inspect target-service --format '{{range .Mounts}}{{.Source}}->{{.Destination}} {{end}}'`,
+    );
+    if (!mounts.out.includes(WORKSPACE)) {
+      fail(
+        `target-service 的挂载源不在工作区路径下：${mounts.out}\n期望挂载源 = ${WORKSPACE}/logs（工作区 2026-11-04 已搬到仓库外，见 incident/lab-paths.json）。`,
+      );
+    }
+    record('P2', true, `挂载源指向工作区：${mounts.out}`);
+
+    // 日志文件必须真的在增长——容器 healthy 但日志文件不增长是搬家的静默损坏之一
+    const appLog = join(WORKSPACE, 'logs/app.log');
+    const stat1 = sh(`stat -c '%s' ${appLog}`);
+    if (stat1.code !== 0) fail(`读不到 ${appLog}：${stat1.err}`);
+    await sleep(3000);
+    const size1 = Number(stat1.out);
+    const size2 = Number(sh(`stat -c '%s' ${appLog}`).out);
+    if (!(size2 > size1)) {
+      fail(
+        `app.log 3 秒内没有增长（${size1} → ${size2}）。容器 healthy 不代表日志通道活着——文件属主不对时容器会退回 stdout。`,
+      );
+    }
+    record('P3', true, `app.log 在增长（${size1} → ${size2} 字节）`);
+
+    // 基线 5xx 比例必须为 0。**必须在下面那次 order2 探针之前测**——
+    // 探针本身会产生一次 500，会把 1 分钟窗口的比例顶到 0.006。
+    // 所以这里等一小会儿让窗口滚过去：上一轮/上一次 dry-run 留下的那一次 500
+    // 会自然滚出窗口；而真实残留的故障态会让比例一直不降，等完就中止。
+    const baselineRatio = await readRatio();
+    if (baselineRatio !== 0) {
+      log(`  基线 5xx 比例 ${baselineRatio}，等窗口滚出上一次探针的残留…`);
+      if (!(await waitHealthyBaseline(90000))) {
+        fail(
+          `基线 5xx 比例 90 秒内没回到 0（当前 ${await readRatio()}）。上一轮故障态没清干净。`,
+        );
+      }
+    }
+    record('P4', true, '基线 5xx 比例 = 0');
+
+    const alerts0 = await json(`${PROM}/api/v1/alerts`);
+    if (
+      alerts0.data.alerts.some(
+        (a) => a.labels?.alertname === 'HighServerErrorRate',
+      )
+    ) {
+      fail(
+        '开跑前 HighServerErrorRate 已经在 firing。实验台不干净，这一轮的结果不可用。',
+      );
+    }
+    record('P5', true, '开跑前没有告警在 firing');
+  } // ← 合成夹具的前置闸门到此为止；真实靶子走上面那套
 
   await spec.checkWindow();
 
@@ -991,7 +1158,10 @@ async function main() {
   record(
     'P9',
     true,
-    `工作区就位（custom_cwd=${grp.custom_cwd}，folder=${grp.folder}）`,
+    `工作区就位（custom_cwd=${grp.custom_cwd}，folder=${grp.folder}）` +
+      (REAL_MODE
+        ? `——⚠ 这还是**合成夹具**的工作区（里面是夹具的源码，不是靶子的仓库）。真实靶子轮次要换成靶子仓库的工作区，见 REAL-TARGET.md 第 3 步；本轮是 dry-run，Agent 不跑。`
+        : ''),
   );
 
   // 把台账路径交给 Agent（写进该工作区的容器环境配置）。
@@ -1048,7 +1218,7 @@ async function main() {
   record(
     'P12',
     true,
-    `provider 接得住一轮规模（${p12.measured.approx_input_tokens} token / ${p12.measured.elapsed_ms}ms，基准：${p12.measured.reference_round_source}）`,
+    `provider 接得住一轮规模（${p12.measured.approx_input_tokens} token / ${p12.measured.elapsed_ms}ms，基准：${p12.measured.reference_round_source}，${probeVerdictNote(p12.measured)}）`,
   );
 
   if (DRY_RUN) {
@@ -1195,7 +1365,7 @@ async function main() {
   record(
     'P12b',
     true,
-    `开跑前 provider 仍接得住一轮规模（${p12b.measured.approx_input_tokens} token / ${p12b.measured.elapsed_ms}ms）`,
+    `开跑前 provider 仍接得住一轮规模（${p12b.measured.approx_input_tokens} token / ${p12b.measured.elapsed_ms}ms，${probeVerdictNote(p12b.measured)}）`,
   );
 
   writeFileSync('/tmp/mc-cookie.txt', cookie);

@@ -427,15 +427,110 @@ function startAnchor() {
     if (!Number.isNaN(ms)) return { ms, source: 'docker inspect' };
   } catch {
     // A target that is not a local container (a service running on a
-    // developer's machine) has no docker inspect to ask. The descriptor can
-    // carry the anchor instead.
+    // developer's machine) has no docker inspect to ask. The process itself
+    // knows when it started.
   }
+  const host = hostProcessAnchor();
+  if (host) return host;
   const declared = DESCRIPTOR?.startedAt;
   if (!declared) return { ms: null, source: 'unavailable' };
   const ms = Date.parse(declared);
   return Number.isNaN(ms)
     ? { ms: null, source: 'unavailable' }
     : { ms, source: 'descriptor.startedAt (target is not a local container)' };
+}
+
+// The start time of a process, or null when it cannot be established.
+//
+// /proc/<pid>/stat field 22 is the process start time in clock ticks since
+// boot; /proc/stat's btime is the boot time; CLK_TCK is the tick rate. All
+// three come from the running system -- nothing here is a timestamp we typed.
+function procStartMs(pid) {
+  let statText;
+  try {
+    statText = readFileSync(`/proc/${pid}/stat`, 'utf8');
+  } catch {
+    return null;
+  }
+  // The stat line carries the executable name in parentheses, and that name
+  // may contain spaces, so the fields after it are split from the last ')'.
+  const close = statText.lastIndexOf(')');
+  if (close === -1) return null;
+  const ticks = Number(
+    statText
+      .slice(close + 2)
+      .trim()
+      .split(/\s+/)[19],
+  );
+  if (!Number.isFinite(ticks)) return null;
+
+  let hz;
+  try {
+    hz = Number(
+      execFileSync('getconf', ['CLK_TCK'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim(),
+    );
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(hz) || hz <= 0) return null;
+
+  let btime;
+  try {
+    const m = /^btime\s+(\d+)/m.exec(readFileSync('/proc/stat', 'utf8'));
+    if (!m) return null;
+    btime = Number(m[1]);
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(btime)) return null;
+
+  const ms = btime * 1000 + (ticks / hz) * 1000;
+  if (!Number.isFinite(ms) || ms > Date.now() + 1000) return null;
+  return ms;
+}
+
+// The anchor for a target that is a host process rather than a container.
+//
+// A descriptor's `startedAt` is a value a human typed once. On the second
+// restart it is stale, and a stale anchor is worse than no anchor: `deploy
+// current` would report "no ledger entry matches this startup" for a
+// deployment the ledger does have, and the log window would start days early.
+//
+// So the anchor is **measured**: the pid is found by the port the target's
+// actuator listens on, and the start time comes out of /proc. A restart
+// changes the pid, and the anchor follows it.
+function hostProcessAnchor() {
+  const base = DESCRIPTOR?.actuatorBaseUrl;
+  if (!base) return null;
+  let port;
+  try {
+    port = new URL(base).port;
+  } catch {
+    return null;
+  }
+  if (!port) return null;
+  let pids;
+  try {
+    pids = execFileSync('lsof', [`-ti:${port}`, '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+  for (const pid of pids) {
+    const ms = procStartMs(pid);
+    if (ms !== null) {
+      return { ms, source: `host process (pid ${pid}, port ${port})` };
+    }
+  }
+  return null;
 }
 
 function containerStartedAt() {
@@ -881,22 +976,20 @@ async function main() {
         const raw = inspectOrNull('{{.State.StartedAt}}');
         if (raw !== null) {
           console.log(`container_started_at: ${raw}`);
+          console.log(`container_started_at_source: docker inspect`);
         } else {
           // The target is not a local container (a service running as a host
-          // process). The descriptor carries the anchor instead of docker.
-          const ms = containerStartedAt();
+          // process). The anchor comes from the process itself when it can be
+          // measured, and from the descriptor only as a last resort.
+          const anchor = startAnchor();
           console.log(
             `container_started_at: ${
-              ms === null ? '(unavailable)' : new Date(ms).toISOString()
+              anchor.ms === null
+                ? '(unavailable)'
+                : new Date(anchor.ms).toISOString()
             }`,
           );
-          console.log(
-            `container_started_at_source: ${
-              ms === null
-                ? 'unavailable'
-                : 'descriptor.startedAt (target is not a local container)'
-            }`,
-          );
+          console.log(`container_started_at_source: ${anchor.source}`);
         }
         console.log(
           `app_started_log: ${

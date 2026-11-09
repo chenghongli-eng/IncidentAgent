@@ -83,7 +83,10 @@ services:
     container_name: incident-prometheus-real
     network_mode: host
     volumes:
-      - /mnt/my-work/incident-lab/targets/p2/metrics/prometheus-host.yml:/etc/prometheus/prometheus.yml:ro
+      # 第 2 版配置（仓库外）：比第 1 版多了告警规则与告警转发。
+      # 第 1 版（../metrics/prometheus-host.yml）保留着，没删——它是历史。
+      - /mnt/my-work/incident-lab/targets/p2/metrics-v2/prometheus-host.yml:/etc/prometheus/prometheus.yml:ro
+      - /mnt/my-work/incident-lab/targets/p2/metrics-v2/rules-host.yml:/etc/prometheus/rules.yml:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--web.listen-address=127.0.0.1:9094'

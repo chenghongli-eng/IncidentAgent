@@ -26,6 +26,7 @@ import {
   rmSync,
   writeFileSync,
   readFileSync,
+  readdirSync,
   existsSync,
   mkdirSync,
   writeSync,
@@ -329,6 +330,144 @@ const gitStale = makeGitRepo('git-stale', [
   { content: 'a', message: 'one', date: '2026-01-01T09:00:00' },
 ]);
 
+/**
+ * 两个克隆夹具：提交内容、时间戳完全一样，唯一的差别是**本地克隆落后于
+ * 远端没有**。
+ *
+ * 少这一对夹具，「构建之前最后一个提交就是被构建的那个提交」这条规则就会
+ * 在陈旧克隆上给出**看起来有值、其实过期**的答案：所有更新的构建都被推断
+ * 成同一个 HEAD（实测踩过：clone 不动了，之后几轮采集的 commit 全是那一个）。
+ *
+ *   - gitCloneBehind：clone 停在 commit A，远端 HEAD 已经是 commit B。
+ *     候选（A）落在构建之前 → 本地可能缺了中间的提交 → 不能报 git-window。
+ *   - gitCloneCurrent：clone 已经包含 commit B → 候选（B）是连续的 → 照常。
+ */
+function makeClonePair(name) {
+  const work = join(dir, `${name}-work`);
+  mkdirSync(work, { recursive: true });
+  git(['init', '-q'], work);
+  git(['config', 'user.email', 'control@example.invalid'], work);
+  git(['config', 'user.name', 'control'], work);
+
+  const commit = (content, message, date) => {
+    writeFileSync(join(work, 'file.txt'), content);
+    git(['add', '-A'], work);
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_DATE: `${date} +0000`,
+      GIT_COMMITTER_DATE: `${date} +0000`,
+    };
+    execFileSync('git', ['commit', '-q', '-m', message], {
+      cwd: work,
+      encoding: 'utf8',
+      env,
+    });
+  };
+
+  commit('a', 'one', '2026-03-01T09:00:00');
+  // 这个 clone 拍下来的时候，远端还只有 commit A。
+  const behind = join(dir, `${name}-clone-behind`);
+  git(['clone', '-q', work, behind], dir);
+
+  commit('b', 'two', '2026-03-01T09:30:00');
+  // 这个 clone 拍下来的时候，远端已经有 commit B 了。
+  const current = join(dir, `${name}-clone-current`);
+  git(['clone', '-q', work, current], dir);
+
+  return { behind, current };
+}
+
+const { behind: gitCloneBehind, current: gitCloneCurrent } =
+  makeClonePair('git-clone');
+
+/**
+ * 把克隆「最后一次从远端取东西的时刻」往前挪。
+ *
+ * 这个夹具造的是「克隆在构建之前就停止更新了」这个形状：克隆的知识截止
+ * 时刻早于构建时刻，构建用的提交就可能根本不在本地——而远端现在能不能
+ * 连上，跟这个判断毫无关系（那条路一旦断掉就查不出任何东西）。
+ *
+ * 真实克隆没法回拨时钟，所以直接改远端跟踪分支的 reflog 时间戳。那个文件
+ * 记的本来就是「这个克隆什么时候知道远端的」，夹具改的是它记录的时刻，
+ * 不是 git 的行为。
+ */
+function backdateRemoteReflog(repo, iso) {
+  const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  const stamp = Math.floor(Date.parse(iso) / 1000);
+  const files = [];
+  const walk = (dir) => {
+    let names = [];
+    try {
+      names = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of names) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else files.push(full);
+    }
+  };
+  walk(join(gitDir, 'logs', 'refs', 'remotes'));
+  let touched = 0;
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    const out = text.replace(
+      /(\d{10}) ([+-]\d{4})(\t)/g,
+      (m, ts, tz, tab) => `${stamp} +0000${tab}`,
+    );
+    if (out !== text) {
+      writeFileSync(file, out);
+      touched += 1;
+    }
+  }
+  return touched;
+}
+
+/**
+ * 又一对近邻夹具：提交内容、时间戳、构建时刻全都一样，唯一的差别是
+ * **克隆最后一次从远端取东西的时刻**在构建之前还是之后。
+ *
+ *   - gitStaleAtBuild：克隆的知识截止在 2026-02-01，构建在 03-01 →
+ *     构建用的提交可能不在本地 → 不能报 window。
+ *   - gitFreshAtBuild：同样的提交，克隆是刚 clone 的（知识截止在构建之后）
+ *     → 候选是连续的 → 照常报 window。
+ */
+function makeStaleAtBuildPair(name) {
+  const work = join(dir, `${name}-work`);
+  mkdirSync(work, { recursive: true });
+  git(['init', '-q'], work);
+  git(['config', 'user.email', 'control@example.invalid'], work);
+  git(['config', 'user.name', 'control'], work);
+  writeFileSync(join(work, 'file.txt'), 'a');
+  git(['add', '-A'], work);
+  execFileSync('git', ['commit', '-q', '-m', 'one'], {
+    cwd: work,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_DATE: '2026-03-01T09:00:00 +0000',
+      GIT_COMMITTER_DATE: '2026-03-01T09:00:00 +0000',
+    },
+  });
+
+  const fresh = join(dir, `${name}-fresh`);
+  git(['clone', '-q', work, fresh], dir);
+  const stale = join(dir, `${name}-stale`);
+  git(['clone', '-q', work, stale], dir);
+  const touched = backdateRemoteReflog(stale, '2026-02-01T00:00:00Z');
+  return { fresh, stale, touched };
+}
+
+const {
+  fresh: gitFreshAtBuild,
+  stale: gitStaleAtBuild,
+  touched: gitStaleReflogTouched,
+} = makeStaleAtBuildPair('git-stale-at-build');
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -414,6 +553,65 @@ function collect(repo, args = [], env = {}) {
     'a build in a quiet stretch is labelled as a fallback, not as a window match',
     ok,
     `exit=${r.code} sources=${r.parsed?.entries?.map((e) => e.commit_source).join(',')}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 陈旧克隆：本地落后于远端时，不能把本地 HEAD 当成被构建的那个提交
+// ---------------------------------------------------------------------------
+
+{
+  const r = await collect('ok', ['--git', gitCloneBehind]);
+  const sources = r.parsed?.entries?.map((e) => e.commit_source) ?? [];
+  const associations = r.parsed?.entries?.map((e) => e.association) ?? [];
+  check(
+    '本地克隆落后于远端 → 降级成 fallback，不报 window（同一个 HEAD 不能当成构建的提交）',
+    r.code === 0 &&
+      sources.length > 0 &&
+      sources.every((s) => s === 'git-head-fallback') &&
+      associations.some((a) => /behind/i.test(String(a))),
+    `exit=${r.code} sources=${sources.join(',')} reason=${associations[0] ?? '无'}`,
+  );
+}
+
+{
+  const r = await collect('ok', ['--git', gitCloneCurrent]);
+  const sources = r.parsed?.entries?.map((e) => e.commit_source) ?? [];
+  check(
+    '近邻正对照：克隆是最新的 → 照常报 window（降级不能过度）',
+    r.code === 0 &&
+      sources.length > 0 &&
+      sources.every((s) => s === 'git-window'),
+    `exit=${r.code} sources=${sources.join(',')}`,
+  );
+}
+
+{
+  const r = await collect('ok', ['--git', gitStaleAtBuild]);
+  const sources = r.parsed?.entries?.map((e) => e.commit_source) ?? [];
+  const associations = r.parsed?.entries?.map((e) => e.association) ?? [];
+  check(
+    '构建发生在克隆最后一次取东西之后 → 降级成 fallback（本地可能缺了构建的提交）',
+    gitStaleReflogTouched > 0 &&
+      r.code === 0 &&
+      sources.length > 0 &&
+      sources.every((s) => s === 'git-head-fallback') &&
+      associations.some((a) =>
+        /stopped learning about the remote/i.test(String(a)),
+      ),
+    `改了 ${gitStaleReflogTouched} 个 reflog；exit=${r.code} sources=${sources.join(',')} reason=${associations[0] ?? '无'}`,
+  );
+}
+
+{
+  const r = await collect('ok', ['--git', gitFreshAtBuild]);
+  const sources = r.parsed?.entries?.map((e) => e.commit_source) ?? [];
+  check(
+    '近邻正对照：同样的提交，克隆是新的 → 照常报 window（降级不能过度）',
+    r.code === 0 &&
+      sources.length > 0 &&
+      sources.every((s) => s === 'git-window'),
+    `exit=${r.code} sources=${sources.join(',')}`,
   );
 }
 

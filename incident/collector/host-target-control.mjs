@@ -23,6 +23,8 @@ import {
   rmSync,
   writeFileSync,
   mkdirSync,
+  cpSync,
+  renameSync,
   writeSync,
   utimesSync,
 } from 'node:fs';
@@ -35,6 +37,9 @@ import {
   fileSha256,
   artifactStat,
   artifactIdentity,
+  treeSha256,
+  treeIdentity,
+  listTreeFiles,
   parseProcStatStarttime,
   parseBtimeSeconds,
   processStartMs,
@@ -439,6 +444,101 @@ expectHardError(
 );
 
 // ---------------------------------------------------------------------------
+// A deployment unit that is a directory
+// ---------------------------------------------------------------------------
+
+// The layout the real target's CI image runs: a thin jar plus the lib/
+// directory it loads its dependencies from. The unit is the pair.
+const unitDir = join(dir, 'unit');
+mkdirSync(join(unitDir, 'lib'), { recursive: true });
+writeFileSync(join(unitDir, 'app.jar'), 'thin jar v1\n');
+writeFileSync(join(unitDir, 'lib', 'dep-a.jar'), 'dependency a v1\n');
+writeFileSync(join(unitDir, 'lib', 'dep-b.jar'), 'dependency b v1\n');
+
+{
+  const id = treeIdentity(unitDir);
+  check(
+    'a deployment unit directory gets one sha256-shaped ledger key',
+    id.digest.startsWith('sha256:') && id.digest.length === 71,
+    `digest=${id.digest.slice(0, 24)}`,
+  );
+}
+
+{
+  // The same unit unpacked somewhere else is the same deployment. Identity
+  // follows the content, not the path it happens to sit at.
+  const copyDir = join(dir, 'unit-elsewhere');
+  cpSync(unitDir, copyDir, { recursive: true });
+  const a = treeSha256(unitDir);
+  const b = treeSha256(copyDir);
+  check(
+    'the same unit under another path keeps its key',
+    a === b,
+    `a=${a.slice(0, 12)} b=${b.slice(0, 12)}`,
+  );
+}
+
+{
+  // A different dependency set is a different deployment, even though the
+  // jar in it did not change. This is the case a single-file key would miss.
+  const before = treeSha256(unitDir);
+  writeFileSync(join(unitDir, 'lib', 'dep-b.jar'), 'dependency b v2\n');
+  const after = treeSha256(unitDir);
+  check(
+    'a changed dependency changes the unit key even when the jar did not',
+    before !== after,
+    `before=${before.slice(0, 12)} after=${after.slice(0, 12)}`,
+  );
+  writeFileSync(join(unitDir, 'lib', 'dep-b.jar'), 'dependency b v1\n');
+}
+
+{
+  // Inside the unit the path matters: the loader resolves it.
+  const before = treeSha256(unitDir);
+  renameSync(
+    join(unitDir, 'lib', 'dep-a.jar'),
+    join(unitDir, 'lib', 'renamed.jar'),
+  );
+  const after = treeSha256(unitDir);
+  check(
+    'a file moved inside the unit changes the key',
+    before !== after,
+    `before=${before.slice(0, 12)} after=${after.slice(0, 12)}`,
+  );
+  renameSync(
+    join(unitDir, 'lib', 'renamed.jar'),
+    join(unitDir, 'lib', 'dep-a.jar'),
+  );
+}
+
+{
+  // Content-addressed: touching the timestamps moves the build time, not
+  // the key. The same rule the single-file form follows.
+  const before = treeIdentity(unitDir);
+  const files = listTreeFiles(unitDir);
+  const target = files[0].abs;
+  const later = new Date(Date.now() + 3600_000);
+  utimesSync(target, later, later);
+  const after = treeIdentity(unitDir);
+  check(
+    'a changed timestamp inside the unit changes the build time, not the key',
+    before.digest === after.digest && before.built_at !== after.built_at,
+    `before=${before.built_at} after=${after.built_at}`,
+  );
+}
+
+{
+  const obs = hostObservation({ artifactDir: unitDir, pid: null });
+  check(
+    'a directory deployment unit is observed as a unit, not as a file',
+    obs.artifact_kind === 'deployment-unit-dir' &&
+      obs.image_ref === unitDir &&
+      obs.evidence === 'host-artifact-tree-sha256',
+    `kind=${obs.artifact_kind} image_ref=${obs.image_ref}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The CLI behaves like the module
 // ---------------------------------------------------------------------------
 
@@ -489,6 +589,38 @@ function runCli(args) {
     failedHard = err.status === 1;
   }
   check('the CLI refuses to run without an artifact', failedHard, 'exit=1');
+}
+
+{
+  const out = runCli(['--artifact-dir', unitDir]);
+  check(
+    'the CLI prints one observation for a deployment unit directory',
+    out.digest === `sha256:${treeSha256(unitDir)}` &&
+      out.artifact_kind === 'deployment-unit-dir' &&
+      out.pod_started_at === null,
+    `digest=${out.digest?.slice(0, 20)} kind=${out.artifact_kind}`,
+  );
+}
+
+{
+  // The near-identical negative: giving both forms is a refusal, and the
+  // positive next to it is that each form on its own works. A CLI that
+  // refused both would pass the refusal and fail the positive.
+  let failedHard = false;
+  try {
+    execFileSync(
+      process.execPath,
+      [cli, '--artifact', artifactPath, '--artifact-dir', unitDir],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+  } catch (err) {
+    failedHard = err.status === 1 && String(err.stderr).trim().length > 0;
+  }
+  check(
+    'the CLI refuses both an artifact and a deployment unit at once',
+    failedHard,
+    'exit=1 且 stderr 有说明',
+  );
 }
 
 // ---------------------------------------------------------------------------

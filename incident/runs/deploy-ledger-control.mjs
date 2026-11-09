@@ -30,6 +30,7 @@
 //     node incident/runs/deploy-ledger-control.mjs
 
 import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import {
   existsSync,
   readFileSync,
@@ -853,6 +854,114 @@ expectMiss(
     ok,
     `exit=${r.code} duplicates=${parsed?.duplicate_digests?.length}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// The anchor of a host-process target is measured, not declared
+//
+// A target that runs as a host process has no container to inspect. Its
+// anchor used to be a field in the descriptor -- a value a human typed once.
+// On the second restart that field is stale, and a stale anchor is worse
+// than none: `deploy current` would report "no ledger entry matches this
+// startup" for a deployment the ledger does have.
+//
+// The anchor is now measured from the live process (its start time out of
+// /proc, found by the port the target's actuator listens on). The descriptor
+// field is only the last resort.
+// ---------------------------------------------------------------------------
+
+{
+  // The port this control listens on is the target's actuator port for the
+  // duration of the case.
+  const server = createServer((_req, res) => {
+    res.end('ok');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+
+  // An independent reading of this process's own start time, from the
+  // system: elapsed seconds since it started.
+  const elapsed = Number(
+    spawnSync('ps', ['-o', 'etimes=', '-p', String(process.pid)], {
+      encoding: 'utf8',
+    }).stdout.trim(),
+  );
+  const selfStart = new Date(Date.now() - elapsed * 1000).toISOString();
+
+  const descriptorPath = join(dir, 'host-target.json');
+  const ledgerPath = join(dir, 'host-target-ledger.jsonl');
+  // A deliberately wrong declared anchor: if the tool reports this one, it
+  // is reading a stale human-typed value.
+  writeFileSync(
+    descriptorPath,
+    JSON.stringify({
+      id: 'host-form-control',
+      actuatorBaseUrl: `http://127.0.0.1:${port}`,
+      container: 'no-such-container-for-this-control',
+      startedAt: '2020-01-01T00:00:00Z',
+    }),
+  );
+  writeFileSync(
+    ledgerPath,
+    `${JSON.stringify({
+      digest: DIGEST_NEW,
+      image_ref: 'host-form-control',
+      pod_started_at: selfStart,
+      running_observed_at: selfStart,
+      running_source: 'host',
+      collected_at: selfStart,
+    })}\n`,
+  );
+
+  const r = run(['deploy', 'current'], {
+    INCIDENT_TARGET_FILE: descriptorPath,
+    DEPLOY_LEDGER: ledgerPath,
+  });
+  const parsed = parseOut(r);
+  const measured =
+    r.code === 0 &&
+    typeof parsed?.anchor_source === 'string' &&
+    parsed.anchor_source.includes('host process') &&
+    parsed.matched === true &&
+    Math.abs(parsed.delta_seconds) < 5;
+  check(
+    'the anchor of a host-process target is measured from the live process',
+    measured,
+    `exit=${r.code} source=${parsed?.anchor_source} matched=${parsed?.matched} delta=${parsed?.delta_seconds}`,
+  );
+
+  // The near-identical negative: the same descriptor with a port nobody
+  // listens on. There is no process to measure, so the declared value is
+  // used -- and the tool says which one it used. A tool that always reported
+  // "host process" would pass the case above and fail this one.
+  const deadDescriptorPath = join(dir, 'host-target-dead.json');
+  writeFileSync(
+    deadDescriptorPath,
+    JSON.stringify({
+      id: 'host-form-control',
+      actuatorBaseUrl: 'http://127.0.0.1:1',
+      container: 'no-such-container-for-this-control',
+      startedAt: '2020-01-01T00:00:00Z',
+    }),
+  );
+  const dead = run(['deploy', 'current'], {
+    INCIDENT_TARGET_FILE: deadDescriptorPath,
+    DEPLOY_LEDGER: ledgerPath,
+  });
+  // With the declared anchor nothing in the ledger matches, so the tool
+  // refuses -- and the refusal has to name the anchor it used and where it
+  // came from, so a reader can tell a stale anchor from a real one.
+  const fellBack =
+    dead.code !== 0 &&
+    dead.err.includes('2020-01-01T00:00:00.000Z') &&
+    dead.err.includes('descriptor.startedAt');
+  check(
+    'with no live process the declared anchor is used and named as such',
+    fellBack,
+    `exit=${dead.code} names-anchor=${dead.err.includes('2020-01-01T00:00:00.000Z')} names-source=${dead.err.includes('descriptor.startedAt')}`,
+  );
+
+  server.close();
 }
 
 // ---------------------------------------------------------------------------

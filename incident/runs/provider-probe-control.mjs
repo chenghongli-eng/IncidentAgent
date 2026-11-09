@@ -74,6 +74,10 @@ const status = Number(process.env.FAKE_PROVIDER_STATUS || '200');
 const mode = process.env.FAKE_PROVIDER_MODE || 'echo';
 const capturePath = process.env.FAKE_PROVIDER_CAPTURE || '';
 
+// 请求序号：探针自查重试时会发第二次请求，替身要能分辨第几次。
+let callIndex = 0;
+const requests = [];
+
 globalThis.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : String((input && input.url) || input);
   if (!/\\/v1\\/messages(\\?|$)/.test(url)) return original(input, init);
@@ -91,22 +95,28 @@ globalThis.fetch = async (input, init = {}) => {
   const end = (prompt.match(/PAYLOAD-END-\\d+-([0-9A-F]+)/i) || [])[1] || null;
 
   const headerNames = Object.keys(init.headers || {}).map((h) => h.toLowerCase()).sort();
+  callIndex += 1;
+  const thisCall = callIndex;
+  const record = {
+    call: thisCall,
+    url_path: new URL(url).pathname,
+    method: init.method || 'POST',
+    body_bytes: Buffer.byteLength(raw, 'utf8'),
+    header_names: headerNames,
+    auth_header: headerNames.includes('x-api-key')
+      ? 'x-api-key'
+      : headerNames.includes('authorization')
+        ? 'authorization'
+        : null,
+    head_marker_found: Boolean(head),
+    end_marker_found: Boolean(end),
+    max_tokens: parsed && typeof parsed.max_tokens === 'number' ? parsed.max_tokens : null,
+  };
+  requests.push(record);
   if (capturePath) {
     writeFileSync(
       capturePath,
-      JSON.stringify({
-        url_path: new URL(url).pathname,
-        method: init.method || 'POST',
-        body_bytes: Buffer.byteLength(raw, 'utf8'),
-        header_names: headerNames,
-        auth_header: headerNames.includes('x-api-key')
-          ? 'x-api-key'
-          : headerNames.includes('authorization')
-            ? 'authorization'
-            : null,
-        head_marker_found: Boolean(head),
-        end_marker_found: Boolean(end),
-      }),
+      JSON.stringify({ ...record, request_count: requests.length, requests }),
     );
   }
 
@@ -124,8 +134,22 @@ globalThis.fetch = async (input, init = {}) => {
 
   // stop_reason='max_tokens' 模拟「探针自己的输出预算用完了」。
   // 这和「平台截断了上下文」是两回事：前者是探针的锅，后者才是 provider 的锅。
-  const stopReason = mode === 'budget' ? 'max_tokens' : 'end_turn';
-  if (mode === 'budget') reply = '';
+  //
+  // 'budget-then-echo'：第一次预算用尽、第二次正常回显——模拟「探针自查重试
+  // 之后真的量到了」，用来证明重试这条路真的通。
+  // 'budget-then-budget'：两次都预算用尽——重试救不回来，必须仍然判失败。
+  let stopReason = 'end_turn';
+  if (mode === 'budget' || mode === 'budget-then-budget') {
+    stopReason = 'max_tokens';
+    reply = '';
+  } else if (mode === 'budget-then-echo') {
+    if (thisCall === 1) {
+      stopReason = 'max_tokens';
+      reply = '';
+    } else {
+      reply = 'PAYLOAD-END-' + (end || '');
+    }
+  }
 
   const body = JSON.stringify({
     id: 'msg_control',
@@ -374,6 +398,56 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+// 8b. 探针自查重试：自己的输出预算用完了，换个更大的预算再问一次
+//
+// 这一条存在的理由是 2026-11-06 那次**假阴性**：模型思考 token 吃光了探针
+// 自己的 max_tokens，回复里没有标记，探针就把一个 provider 完全接得住的
+// 轮次拦在了门外。现在探针遇到 stop_reason=max_tokens 会自查重试。
+//
+// 判据分两面，缺一不可：
+//   - 正向：重试之后真的量到了 → completed=true，且记录了重试这件事。
+//   - 近邻负对照：重试**也**预算用尽 → 仍然必须判失败，不能因为「重试过」
+//     就放行。
+// ---------------------------------------------------------------------------
+
+const retryRun = runProbe({ status: 200, mode: 'budget-then-echo' });
+const retryRequests = retryRun.capture?.requests ?? [];
+check(
+  '探针自查重试：第一次预算用尽 → 换更大预算重试 → 判通过',
+  retryRun.code === 0 &&
+    retryRun.measured?.completed === true &&
+    gateVerdict(retryRun.measured) === true &&
+    retryRun.measured?.probe_retry?.reason ===
+      'probe_output_budget_exhausted' &&
+    retryRequests.length === 2 &&
+    Number(retryRequests[1]?.max_tokens) > Number(retryRequests[0]?.max_tokens),
+  `exit=${retryRun.code} completed=${retryRun.measured?.completed} 请求 ${retryRequests.length} 次，` +
+    `max_tokens ${retryRequests[0]?.max_tokens}→${retryRequests[1]?.max_tokens}；` +
+    `probe_retry=${JSON.stringify(retryRun.measured?.probe_retry ?? null)}`,
+);
+
+const retryFailRun = runProbe({ status: 200, mode: 'budget-then-budget' });
+const retryFailRequests = retryFailRun.capture?.requests ?? [];
+check(
+  '近邻负对照：重试仍然预算用尽 → 仍判失败，且分类仍是 probe_output_truncated',
+  retryFailRun.code !== 0 &&
+    retryFailRun.measured?.completed === false &&
+    retryFailRun.measured?.failure_class === 'probe_output_truncated' &&
+    retryFailRun.measured?.failure_class !== 'payload_not_echoed' &&
+    gateVerdict(retryFailRun.measured) === false &&
+    retryFailRequests.length === 2,
+  `exit=${retryFailRun.code} failure_class=${retryFailRun.measured?.failure_class} ` +
+    `stop_reason=${retryFailRun.measured?.stop_reason} 请求 ${retryFailRequests.length} 次`,
+);
+
+check(
+  '探针自查重试：没发生重试时不留下 probe_retry（否则记录会骗人）',
+  passRun.measured?.probe_retry === undefined &&
+    wrongRun.measured?.probe_retry === undefined,
+  `通过那次 probe_retry=${JSON.stringify(passRun.measured?.probe_retry ?? null)}`,
+);
+
+// ---------------------------------------------------------------------------
 // 9. 估算随上下文变大而变大
 // ---------------------------------------------------------------------------
 
@@ -503,6 +577,40 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+// 14b. 两类截断的判据要在**两处**都成立
+//
+// P12（前置）和 P12b（开跑前）跑的是同一个探针，但只有一处记 stop_reason
+// 的话，开跑前那次仍然可能假阴性——判据漏了一半，闸门还是会在「探针自己的
+// 预算用完了」这一档上误判。所以两处的记录里都必须带上 stop_reason。
+//
+// 这条只查源码里的接线，所以配一条近邻正对照：那个把 stop_reason 写进记录
+// 的辅助函数必须真的产出 stop_reason 字样（不然一个空壳函数也能蒙混过去）。
+// ---------------------------------------------------------------------------
+
+const p12HasVerdict = roundSrc.includes('probeVerdictNote(p12.measured)');
+const p12bHasVerdict = roundSrc.includes('probeVerdictNote(p12b.measured)');
+const verdictHelperEmitsStopReason =
+  /function probeVerdictNote[\s\S]{0,600}stop_reason/.test(roundSrc);
+check(
+  'P12 与 P12b 两处的记录都带 stop_reason（判据不能在只落在一处）',
+  p12HasVerdict && p12bHasVerdict && verdictHelperEmitsStopReason,
+  `P12=${p12HasVerdict} P12b=${p12bHasVerdict} 辅助函数真的产出 stop_reason=${verdictHelperEmitsStopReason}`,
+);
+
+const probeSrcText = readFileSync(PROBE_SRC, 'utf8');
+const retryContract =
+  /PROBE_RETRY_MAX_TOKENS/.test(probeSrcText) &&
+  /stop_reason === 'max_tokens'/.test(probeSrcText) &&
+  /probe_retry/.test(probeSrcText);
+check(
+  '探针自己带着自查重试（重试这件事必须留在输出里，不能悄悄发生）',
+  retryContract,
+  `PROBE_RETRY_MAX_TOKENS=${/PROBE_RETRY_MAX_TOKENS/.test(probeSrcText)} ` +
+    `触发条件=${/stop_reason === 'max_tokens'/.test(probeSrcText)} ` +
+    `输出字段=${/probe_retry/.test(probeSrcText)}`,
+);
+
+// ---------------------------------------------------------------------------
 // 15. 端到端：--dry-run 里 P12 真的把估算写进了 manifest
 //     （需要实验台在跑：容器、服务、工作区都在）
 // ---------------------------------------------------------------------------
@@ -516,14 +624,18 @@ const manifestBefore = new Set(
  *
  * 归档的老 manifest 是在 `dry_run` 字段存在之前写的，它们本来就没有这个
  * 字段——拿它们断言 `dry_run !== true` 是**恒真**的，等于没测。
- * 所以这条对照改为核对源码：manifest 字面量里必须显式写 `dry_run: false`，
- * 且只有 dry-run 分支会把它改成 true。
+ * 所以这条对照改为核对源码：manifest 建的时候必须按 `--dry-run` 这个开关
+ * 如实写（真轮次 → false，dry-run → true），而不是等跑完再补。
+ *
+ * 为什么改成「建的时候写」：dry-run 中途失败走的是中止分支，补写的代码
+ * 根本执行不到，留下的 manifest 就自称不是 dry-run——实测踩过这个形状。
  */
 function realRoundsStayUnmarked() {
   const src = readFileSync(ROUND_SRC, 'utf8');
-  const literal = /dry_run:\s*false/.test(src);
+  const literal = /dry_run:\s*DRY_RUN/.test(src);
+  const flagDerived = /const DRY_RUN = flag\('--dry-run'\)/.test(src);
   const setters = (src.match(/manifest\.dry_run\s*=\s*true/g) || []).length;
-  return { literal, setters };
+  return { literal, flagDerived, setters };
 }
 const dryRun = spawnSync(
   process.execPath,
@@ -584,9 +696,44 @@ check(
   `dry_run=${dryManifest?.dry_run} round_valid=${dryManifest?.round_valid} invalid_reason=${String(dryManifest?.invalid_reason ?? '').slice(0, 60)}`,
 );
 check(
-  '近邻正对照：真跑的轮次不会被打上 dry_run=true（默认值是 false，只有 dry-run 分支才置 true）',
-  realRoundsStayUnmarked().literal && realRoundsStayUnmarked().setters === 1,
-  `manifest 字面量里有 dry_run: false = ${realRoundsStayUnmarked().literal}；置 true 的地方 ${realRoundsStayUnmarked().setters} 处`,
+  '近邻正对照：真跑的轮次不会被打上 dry_run=true（建 manifest 时就按 --dry-run 如实写）',
+  realRoundsStayUnmarked().literal &&
+    realRoundsStayUnmarked().flagDerived &&
+    realRoundsStayUnmarked().setters === 1,
+  `manifest 字面量按开关写 = ${realRoundsStayUnmarked().literal}；` +
+    `开关来自 --dry-run = ${realRoundsStayUnmarked().flagDerived}；` +
+    `后补置 true 的地方 ${realRoundsStayUnmarked().setters} 处`,
+);
+
+// 归档的 manifest 必须**按字段**能判出是不是 dry-run，不能靠读源码字面量。
+// 那些文件是在 `dry_run` 字段存在之前写的，补上 false 之后，检查就能落在
+// 数据本身：一份归档 manifest 缺这个字段，就说明它还没被补齐——那是缺陷，
+// 不是「无关紧要的历史」。
+const archivedManifests = readdirSync(RUNS).filter((f) =>
+  /^round-manifest-.*\.json$/.test(f),
+);
+const archivedDryRunFlags = archivedManifests.map((f) => {
+  try {
+    const parsed = JSON.parse(readFileSync(join(RUNS, f), 'utf8'));
+    return { f, has: 'dry_run' in parsed, value: parsed.dry_run };
+  } catch {
+    return { f, has: false, value: null, broken: true };
+  }
+});
+const archivedMissing = archivedDryRunFlags
+  .filter((x) => !x.has)
+  .map((x) => x.f);
+const archivedTrue = archivedDryRunFlags
+  .filter((x) => x.value === true)
+  .map((x) => x.f);
+check(
+  '归档的 manifest 都带 dry_run 字段，且全是 false（按字段就能判，不必读源码）',
+  archivedManifests.length > 0 &&
+    archivedMissing.length === 0 &&
+    archivedTrue.length === 0,
+  `归档 ${archivedManifests.length} 份；缺字段 ${archivedMissing.length} 份` +
+    `${archivedMissing.length ? '（' + archivedMissing.join('、') + '）' : ''}；` +
+    `标成 true 的 ${archivedTrue.length} 份`,
 );
 
 // 清理判据必须能真的命中：否则上面的断言只在「恰好没清掉」时成立。

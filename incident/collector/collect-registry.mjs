@@ -56,6 +56,7 @@ import {
   createRegistryClient,
   loadGitCommits,
   associateCommit,
+  gitHistoryCoverage,
 } from './registry.mjs';
 import { writeEntries } from './ledger.mjs';
 
@@ -167,6 +168,14 @@ function commits() {
   return gitCommits;
 }
 
+// 本地克隆的历史是不是完整的。没查出来就当「不知道」，不去猜——
+// 降级只在有证据（浅克隆 / 远端领先 / 构建发生在克隆最后一次取东西之后）时才做。
+//
+// 这个判断**依赖构建时刻**，所以每个 tag 各算一次。
+function coverage(builtAtMs) {
+  return gitHistoryCoverage(opts.git, commits(), { builtAtMs });
+}
+
 // Build numbers sort numerically when they are numbers; "latest" then means
 // "highest build number", not "last in the list".
 function byTagOrder(a, b) {
@@ -179,7 +188,12 @@ function byTagOrder(a, b) {
 async function collectTag(tag) {
   const { digest, configDigest } = await registry.manifestFor(tag);
   const { builtAt, builtAtMs } = await registry.configFor(configDigest, tag);
-  const assoc = associateCommit(builtAtMs, commits(), opts.nearHours);
+  const assoc = associateCommit(
+    builtAtMs,
+    commits(),
+    opts.nearHours,
+    coverage(builtAtMs),
+  );
 
   return {
     digest,

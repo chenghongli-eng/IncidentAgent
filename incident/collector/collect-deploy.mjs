@@ -45,6 +45,7 @@ import {
   createRegistryClient,
   loadGitCommits,
   associateCommit,
+  gitHistoryCoverage,
 } from './registry.mjs';
 import { createJenkinsClient, resolveCredentials } from './jenkins.mjs';
 import { createClusterClient, splitImageRef } from './cluster.mjs';
@@ -183,6 +184,11 @@ registry.setRepo(opts.repo);
 let gitCommits = [];
 if (opts.git) gitCommits = loadGitCommits(opts.git);
 
+// 本地克隆的历史覆盖到哪儿（没查出来就说不知道，不猜）。
+// 这个判断依赖构建时刻，所以每个 tag 各算一次。
+const coverage = (builtAtMs) =>
+  opts.git ? gitHistoryCoverage(opts.git, gitCommits, { builtAtMs }) : null;
+
 let jenkins = null;
 if (opts.jenkinsUrl && opts.jenkinsJob) {
   const creds = resolveCredentials({
@@ -300,7 +306,12 @@ for (const tag of wanted) {
   }
 
   const inferred = gitCommits.length
-    ? associateCommit(reg.built_at_ms, gitCommits, opts.nearHours)
+    ? associateCommit(
+        reg.built_at_ms,
+        gitCommits,
+        opts.nearHours,
+        coverage(reg.built_at_ms),
+      )
     : { commit: null, commit_source: 'null', reason: 'no git history' };
 
   const commit = ci ? ci.sha1 : inferred.commit;

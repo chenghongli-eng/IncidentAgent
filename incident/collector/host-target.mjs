@@ -5,6 +5,12 @@
 // identity is the **artifact's own sha256**. Both are written as `sha256:...`,
 // which means the read side needs no second lookup path -- one query, one key.
 //
+// A deployment unit can be more than one file. The real target's CI image
+// runs a thin jar against a `lib/` directory, so the unit is the pair and the
+// key is a **tree hash** over the whole unit (`--artifact-dir`). Keying on
+// `app.jar` alone would call two deployments with different dependencies the
+// same artifact.
+//
 // Two rules this module exists to enforce:
 //
 //  1. **The identity is the artifact, not the process.** A restarted process
@@ -24,10 +30,12 @@ import {
   closeSync,
   existsSync,
   openSync,
+  readdirSync,
   readSync,
   readFileSync,
   statSync,
 } from 'node:fs';
+import { join, relative } from 'node:path';
 
 import { writeEntries } from './ledger.mjs';
 
@@ -92,6 +100,91 @@ export function artifactIdentity({ sha256, size, mtimeMs, path }) {
     digest: `sha256:${sha256}`,
     built_at: new Date(mtimeMs).toISOString(),
     artifact_path: path,
+    artifact_size: size,
+  };
+}
+
+// A deployment unit is not always a single file.
+//
+// The real target's CI image runs a **thin** jar against a `lib/` directory:
+// `java -Dloader.path=lib -jar app.jar`. The running code is that pair. A key
+// computed over `app.jar` alone would call two deployments that differ only in
+// their dependency set the same artifact -- the same false equality the whole
+// ledger exists to avoid, one level down.
+//
+// So a directory deployment unit gets a **tree hash**: every regular file
+// under it, addressed by its path relative to the unit, in sorted order. Two
+// properties matter:
+//
+//   - **Content-addressed and path-independent.** The root directory is not
+//     part of the hash, so the same unit unpacked somewhere else keeps its
+//     key. The artifact is what is deployed; where it was unpacked is not.
+//   - **Path-sensitive inside the unit.** A file that moves inside the unit
+//     changes the key, because `java -Dloader.path` resolves relative to the
+//     unit root.
+export function listTreeFiles(dirPath) {
+  const out = [];
+  const walk = (current) => {
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch (err) {
+      throw new HostTargetError(
+        `读不到部署单元目录 ${current}：${err.message}`,
+      );
+    }
+    for (const entry of entries) {
+      const abs = join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      // Symlinks and anything that is not a regular file are not part of the
+      // running code, and following them could walk out of the unit.
+      if (!entry.isFile()) continue;
+      const st = statSync(abs);
+      out.push({
+        rel: relative(dirPath, abs),
+        abs,
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+      });
+    }
+  };
+  walk(dirPath);
+  return out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+}
+
+export function treeSha256(dirPath) {
+  const files = listTreeFiles(dirPath);
+  const hash = createHash('sha256');
+  for (const file of files) {
+    hash.update(file.rel);
+    hash.update('\0');
+    hash.update(fileSha256(file.abs));
+    hash.update('\0');
+    hash.update(String(file.size));
+    hash.update('\n');
+  }
+  return hash.digest('hex');
+}
+
+// The identity of a directory deployment unit. `built_at` is the newest
+// file mtime in the unit: for an unpacked image layer that is the build
+// time the artifact itself carries, not a clock we read now.
+export function treeIdentity(dirPath) {
+  const files = listTreeFiles(dirPath);
+  if (files.length === 0) {
+    throw new HostTargetError(
+      `部署单元目录 ${dirPath} 是空的，没有可部署的内容。`,
+    );
+  }
+  const size = files.reduce((sum, f) => sum + f.size, 0);
+  const mtimeMs = files.reduce((max, f) => Math.max(max, f.mtimeMs), 0);
+  return {
+    digest: `sha256:${treeSha256(dirPath)}`,
+    built_at: new Date(mtimeMs).toISOString(),
+    artifact_path: dirPath,
     artifact_size: size,
   };
 }
@@ -182,6 +275,7 @@ export function processStartMs(
 // read, so an unsourced commit would be a claim wearing a fact's clothes.
 export function hostObservation({
   artifactPath,
+  artifactDir = null,
   pid = null,
   commit = null,
   commitSource = null,
@@ -189,20 +283,36 @@ export function hostObservation({
   hz = null,
   bootTimeMs = null,
 } = {}) {
-  if (!artifactPath) {
-    throw new HostTargetError('必须给出产物路径。');
+  if (artifactPath && artifactDir) {
+    throw new HostTargetError(
+      '产物路径与部署单元目录只能给一个：前者是一个产物文件，后者是一个部署单元目录。',
+    );
   }
-  if (!existsSync(artifactPath)) {
-    throw new HostTargetError(`产物文件不存在：${artifactPath}`);
+  if (!artifactPath && !artifactDir) {
+    throw new HostTargetError('必须给出产物路径或部署单元目录。');
   }
-  const sha256 = fileSha256(artifactPath);
-  const stat = artifactStat(artifactPath);
-  const identity = artifactIdentity({
-    sha256,
-    size: stat.size,
-    mtimeMs: stat.mtimeMs,
-    path: artifactPath,
-  });
+  let identity;
+  let evidence;
+  if (artifactDir) {
+    if (!existsSync(artifactDir)) {
+      throw new HostTargetError(`部署单元目录不存在：${artifactDir}`);
+    }
+    identity = treeIdentity(artifactDir);
+    evidence = 'host-artifact-tree-sha256';
+  } else {
+    if (!existsSync(artifactPath)) {
+      throw new HostTargetError(`产物文件不存在：${artifactPath}`);
+    }
+    const sha256 = fileSha256(artifactPath);
+    const stat = artifactStat(artifactPath);
+    identity = artifactIdentity({
+      sha256,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      path: artifactPath,
+    });
+    evidence = 'host-artifact-sha256';
+  }
   // Liveness and start time are two different questions. The process may be
   // alive while its start time cannot be reconstructed (an unreadable
   // /proc/<pid>/stat, a container PID namespace, a clock rate we cannot
@@ -217,14 +327,16 @@ export function hostObservation({
   const observation = {
     digest: identity.digest,
     built_at: identity.built_at,
-    image_ref: artifactPath,
+    image_ref: identity.artifact_path,
     artifact_path: identity.artifact_path,
     artifact_size: identity.artifact_size,
+    artifact_kind: artifactDir ? 'deployment-unit-dir' : 'file',
     pod_started_at:
       startedMs === null ? null : new Date(startedMs).toISOString(),
     commit: hasCommit ? commit : null,
     commit_source: hasCommit ? (commitSource ?? 'manual') : 'null',
     observed_at: observedAt,
+    evidence,
   };
   // Only a process we can see gets a running observation. A dead pid is not
   // a running service, and a pid we were never given is not an observation.
@@ -261,7 +373,7 @@ export function toLedgerEntry(observation, opts = {}) {
     running_source: observation.running_source ?? null,
     collected_at: observation.observed_at ?? null,
     evidence: [
-      'host-artifact-sha256',
+      observation.evidence ?? 'host-artifact-sha256',
       ...(observation.pod_started_at ? ['proc-start-time'] : []),
     ],
   };
@@ -274,6 +386,7 @@ export function toLedgerEntry(observation, opts = {}) {
 function parseArgs(argv) {
   const opts = {
     artifact: null,
+    artifactDir: null,
     pid: null,
     commit: null,
     commitSource: null,
@@ -294,6 +407,9 @@ function parseArgs(argv) {
     switch (a) {
       case '--artifact':
         opts.artifact = next();
+        break;
+      case '--artifact-dir':
+        opts.artifactDir = next();
         break;
       case '--pid':
         opts.pid = Number(next());
@@ -323,7 +439,14 @@ function parseArgs(argv) {
         throw new HostTargetError(`未知选项：${a}`);
     }
   }
-  if (!opts.artifact) throw new HostTargetError('必须给出 --artifact。');
+  if (opts.artifact && opts.artifactDir) {
+    throw new HostTargetError(
+      '--artifact 与 --artifact-dir 只能给一个：前者是一个产物文件，后者是一个部署单元目录。',
+    );
+  }
+  if (!opts.artifact && !opts.artifactDir) {
+    throw new HostTargetError('必须给出 --artifact 或 --artifact-dir。');
+  }
   return opts;
 }
 
@@ -332,6 +455,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const opts = parseArgs(process.argv.slice(2));
     const observation = hostObservation({
       artifactPath: opts.artifact,
+      artifactDir: opts.artifactDir,
       pid: Number.isFinite(opts.pid) ? opts.pid : null,
       commit: opts.commit,
       commitSource: opts.commitSource,
