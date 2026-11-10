@@ -399,7 +399,7 @@ try {
     const outside = join(
       dirname(LAB_PATHS.realLaunchSpec),
       'artifacts',
-      '651',
+      '9001',
       'app.jar',
     );
     const p = fixture(dir, 'r5-outside-surface', [
