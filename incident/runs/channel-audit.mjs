@@ -39,13 +39,46 @@ import { homedir } from 'node:os';
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '../..');
 
-const WORKSPACE = JSON.parse(
+const LAB_PATHS = JSON.parse(
   readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
-).workspaceRoot;
+);
+
+const argv = process.argv.slice(2);
+const transcriptPath = argv.find((a) => !a.startsWith('--'));
+const asJson = argv.includes('--json');
+
+/**
+ * 真实靶子那一轮：证据面与答案键**都**换一套。
+ *
+ * 合成夹具那套的面是「工作区 + 仓库里的 incident/runs」。真实靶子这一轮
+ * 换成了另一个工作区（靶子源码快照）和仓库外的答案键（真值、既往轮次、
+ * 启动规格里的故障旋钮）。不换的后果是：Agent 读到真值或启动规格，
+ * 审计却因为「不在合成夹具那套答案键里」而判成 clean——这一轮就成了
+ * 一轮**测不出污染**的轮次。
+ */
+const REAL_MODE = argv.includes('--real');
+const optValue = (name) => {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : null;
+};
+
+const WORKSPACE = REAL_MODE
+  ? LAB_PATHS.realWorkspaceRoot
+  : LAB_PATHS.workspaceRoot;
 const SESSION_ROOT = join(ROOT, 'data/sessions');
 
 /** Agent 有权读取的面：工作区（隔离仓库）+ 它自己的会话目录 + 临时目录。 */
 const ALLOWED_ROOTS = [WORKSPACE, SESSION_ROOT, '/tmp'];
+
+/**
+ * 靶子自己的日志目录。
+ *
+ * 合成夹具的日志就在工作区里，所以「直接读日志文件」属于证据面之内。
+ * 真实靶子的日志在靶子进程的工作目录下（仓库外），口径要一样：
+ * 不给这个目录开面，就等于凭空多出一条「越界」，把有效轮次作废。
+ */
+const REAL_LOGS_DIR = REAL_MODE ? optValue('--logs-dir') : null;
+if (REAL_LOGS_DIR) ALLOWED_ROOTS.push(REAL_LOGS_DIR);
 
 /**
  * 答案键。读到任何一个，这一轮的结论就不能算「Agent 自己诊断出来的」。
@@ -64,6 +97,32 @@ const CONTAMINATING = [
     why: '旋钮文件是运维面，生效值只应通过只读通道 `runtime env` 取得；直读它绕过了通道',
   },
 ];
+
+/**
+ * 真实靶子这一轮多出来的答案键。
+ *
+ * 启动规格里写着**故障旋钮**（这一轮注入的是什么、值是多少）——
+ * 读到它就直接拿到了答案。真值目录是打分判据，往轮次目录里是
+ * 既往的报告原文。三个都在仓库外，但**仓库外不等于不可达**：
+ * host 形态的 Runner 没有沙箱，Agent 的 Bash 够得到整个文件系统。
+ * 所以审计必须把它们当成答案键看着。
+ */
+if (REAL_MODE) {
+  CONTAMINATING.push(
+    {
+      token: LAB_PATHS.realTruthDir,
+      why: '真实轮次的真值（打分判据）目录',
+    },
+    {
+      token: LAB_PATHS.realRoundsDir,
+      why: '真实轮次的产物目录（既往报告原文与打分）',
+    },
+    {
+      token: LAB_PATHS.realLaunchSpec,
+      why: '启动规格里写着这一轮的故障旋钮 = 答案键',
+    },
+  );
+}
 
 /**
  * 仓库搬家前的旧根路径。
@@ -109,12 +168,10 @@ const OUT_OF_SURFACE = [
   { token: '/data/config/container-env', why: '工作区环境配置，不是诊断证据' },
 ];
 
-const argv = process.argv.slice(2);
-const transcriptPath = argv.find((a) => !a.startsWith('--'));
-const asJson = argv.includes('--json');
-
 if (!transcriptPath) {
-  console.error('usage: channel-audit.mjs <transcript.jsonl> [--json]');
+  console.error(
+    'usage: channel-audit.mjs <transcript.jsonl> [--json] [--real] [--logs-dir DIR]',
+  );
   process.exit(2);
 }
 
@@ -280,12 +337,30 @@ const ANSWER_KEY_DIRS = [
     why: '旋钮文件是运维面，生效值只应通过只读通道 `runtime env` 取得；直读它绕过了通道',
   },
 ];
+if (REAL_MODE) {
+  ANSWER_KEY_DIRS.push(
+    {
+      dir: LAB_PATHS.realTruthDir,
+      why: '真实轮次的真值（打分判据）目录',
+    },
+    {
+      dir: LAB_PATHS.realRoundsDir,
+      why: '真实轮次的产物目录（既往报告原文与打分）',
+    },
+  );
+}
 const ANSWER_KEY_FILES = [
   {
     file: join(ROOT, 'incident/RESUME.md'),
     why: '本台账写清了实验设计与历轮结论',
   },
 ];
+if (REAL_MODE) {
+  ANSWER_KEY_FILES.push({
+    file: LAB_PATHS.realLaunchSpec,
+    why: '启动规格里写着这一轮的故障旋钮 = 答案键',
+  });
+}
 
 /** 相对路径按 cwd 解析成绝对路径。 */
 function resolveRelative(cwd, p) {

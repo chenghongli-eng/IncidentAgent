@@ -31,11 +31,12 @@ import {
   existsSync,
   openSync,
   readdirSync,
+  readlinkSync,
   readSync,
   readFileSync,
   statSync,
 } from 'node:fs';
-import { join, relative } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 
 import { writeEntries } from './ledger.mjs';
 
@@ -189,6 +190,130 @@ export function treeIdentity(dirPath) {
   };
 }
 
+// The access mode of an open file descriptor: O_RDONLY / O_WRONLY / O_RDWR.
+// /proc/<pid>/fdinfo/<fd> reports the flags in octal, and the low two bits
+// are the access mode.
+const O_ACCMODE = 3;
+const O_RDONLY = 0;
+
+export function fdOpenFlags(pid, fd) {
+  try {
+    const text = readFileSync(`/proc/${pid}/fdinfo/${fd}`, 'utf8');
+    const m = /^flags:\s*(\d+)/m.exec(text);
+    if (!m) return null;
+    const value = Number.parseInt(m[1], 8);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function isInside(dir, target) {
+  const rel = relative(dir, target);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/**
+ * 部署单元里被这个进程**以写方式**打开的文件。
+ *
+ * 为什么这件事要拦：部署单元的主键是整个单元的 tree hash。运行中的进程往
+ * 单元里写东西（日志、临时文件），主键就随写入漂移——同一份部署前后算出
+ * 两个不同的 digest，而台账读侧是按 digest 反查的，于是它会「查不到自己
+ * 刚写的这一行」。
+ *
+ * 真实靶子踩的就是这个：应用的 logback 配置写 `./logs`（相对工作目录），
+ * 从单元目录里启动，进程就把日志写进了自己要作为身份的那个目录里。
+ */
+export function unitWriteHandles(pid, unitDir) {
+  const fdDir = `/proc/${pid}/fd`;
+  let entries;
+  try {
+    entries = readdirSync(fdDir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const entry of entries) {
+    let target;
+    try {
+      target = readlinkSync(join(fdDir, entry));
+    } catch {
+      continue;
+    }
+    if (typeof target !== 'string') continue;
+    if (target.includes('(deleted)')) continue;
+    if (!isInside(unitDir, target)) continue;
+    const flags = fdOpenFlags(pid, entry);
+    if (flags === null) continue;
+    if ((flags & O_ACCMODE) === O_RDONLY) continue;
+    out.push(target);
+  }
+  return [...new Set(out)].sort();
+}
+
+/**
+ * 部署单元里比进程启动时刻还新的文件。
+ *
+ * 上面那个检查抓的是「正在写」，这个抓的是「已经写过、句柄已关」——
+ * 比如上一次从单元目录里启动时留下的日志。它们同样不属于产物，却会被
+ * tree hash 算进主键。
+ *
+ * 时间比较带一个容差，因为进程启动时刻本身不是精确值：/proc/stat 里的
+ * btime 只到秒（截断），算出来的启动时刻因此可能比真实值早将近一秒。
+ * 不带这个容差，边界上的正常产物文件会被误判成运行期残留——那就会把
+ * 一份干净的部署单元说成不可用。代价是：进程启动后不到两秒内写下的文件
+ * 可能漏过去。这个漏检写在这里，不藏。
+ */
+export const START_TIME_UNCERTAINTY_MS = 2000;
+
+export function unitFilesNewerThan(
+  pid,
+  unitDir,
+  startMs,
+  toleranceMs = START_TIME_UNCERTAINTY_MS,
+) {
+  if (!Number.isFinite(startMs)) return [];
+  const out = [];
+  for (const file of listTreeFiles(unitDir)) {
+    if (file.mtimeMs > startMs + toleranceMs) out.push(file.rel);
+  }
+  return out.sort();
+}
+
+/**
+ * 部署单元必须是**不可变**的：它是主键。
+ *
+ * 两件事会让它可变：运行中的进程正在往里写，或者上一次运行往里留了东西。
+ * 两种情况都拒绝，并且把「为什么拒绝」和「怎么改」一起说出来——一个会
+ * 漂移的主键比没有主键更糟，因为它看起来能用。
+ */
+export function assertUnitImmutable(unitDir, pid, startMs = null) {
+  if (!Number.isFinite(pid) || pid <= 0) return;
+  const writers = unitWriteHandles(pid, unitDir);
+  if (writers.length) {
+    throw new HostTargetError(
+      `部署单元里有正在被进程 ${pid} 写入的文件：\n` +
+        writers.map((w) => `  ${w}`).join('\n') +
+        `\n主键是整个部署单元的 tree hash。运行中的进程往单元里写东西，主键就会随写入漂移：\n` +
+        `同一份部署会算出不同的 digest，读侧按 digest 反查就会查不到自己刚写的这一行。\n` +
+        `改法：把工作目录放到部署单元之外（日志写到别处），或者换一个没有被写入的部署单元。`,
+    );
+  }
+  const fresh = unitFilesNewerThan(pid, unitDir, startMs);
+  if (fresh.length) {
+    throw new HostTargetError(
+      `部署单元里有比进程启动时刻还新的文件（${fresh.length} 个）：\n` +
+        fresh
+          .slice(0, 10)
+          .map((f) => `  ${f}`)
+          .join('\n') +
+        (fresh.length > 10 ? `\n  …还有 ${fresh.length - 10} 个` : '') +
+        `\n这些是上一次运行留在单元里的运行期产物（多半是日志），不属于产物本身，\n` +
+        `但会被 tree hash 算进主键。改法：把它们挪出单元，或换一个干净的部署单元。`,
+    );
+  }
+}
+
 // Field 22 of /proc/<pid>/stat is the process start time in clock ticks since
 // boot. The stat line has the executable name in parentheses and it may
 // contain spaces, so the fields after it are split from the last ')'.
@@ -291,12 +416,25 @@ export function hostObservation({
   if (!artifactPath && !artifactDir) {
     throw new HostTargetError('必须给出产物路径或部署单元目录。');
   }
+  // Liveness and start time are two different questions. The process may be
+  // alive while its start time cannot be reconstructed (an unreadable
+  // /proc/<pid>/stat, a container PID namespace, a clock rate we cannot
+  // read), and the start time may be known while the process is gone.
+  const statText = pid === null ? null : readProcStat(pid);
+  const alive = statText !== null;
+  const startedMs = alive
+    ? processStartMs(pid, { nowMs, hz, bootTimeMs })
+    : null;
+
   let identity;
   let evidence;
   if (artifactDir) {
     if (!existsSync(artifactDir)) {
       throw new HostTargetError(`部署单元目录不存在：${artifactDir}`);
     }
+    // 单元必须不可变才能当主键，所以这一步排在算 tree hash **之前**：
+    // 算出来的 digest 会被写进台账，写完才发现它会漂移就晚了。
+    assertUnitImmutable(artifactDir, alive ? pid : null, startedMs);
     identity = treeIdentity(artifactDir);
     evidence = 'host-artifact-tree-sha256';
   } else {
@@ -313,15 +451,6 @@ export function hostObservation({
     });
     evidence = 'host-artifact-sha256';
   }
-  // Liveness and start time are two different questions. The process may be
-  // alive while its start time cannot be reconstructed (an unreadable
-  // /proc/<pid>/stat, a container PID namespace, a clock rate we cannot
-  // read), and the start time may be known while the process is gone.
-  const statText = pid === null ? null : readProcStat(pid);
-  const alive = statText !== null;
-  const startedMs = alive
-    ? processStartMs(pid, { nowMs, hz, bootTimeMs })
-    : null;
   const hasCommit = typeof commit === 'string' && commit.length > 0;
   const observedAt = new Date(nowMs).toISOString();
   const observation = {

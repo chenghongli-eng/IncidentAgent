@@ -52,6 +52,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const { scoreReport } = await import(
   new URL('./score-report.mjs', import.meta.url).href
@@ -71,6 +72,20 @@ const { resolveTarget, targetProfile, applicationLabel } = await import(
 const { realTargetPreflight, realDeps } = await import(
   new URL('./target-preflight.mjs', import.meta.url).href
 );
+const {
+  loadSpec,
+  startTarget,
+  stopTarget,
+  waitReady,
+  listenPid,
+  healthStatus,
+} = await import(new URL('./real-target.mjs', import.meta.url).href);
+const { hostObservation, toLedgerEntry, processStartMs } = await import(
+  new URL('../collector/host-target.mjs', import.meta.url).href
+);
+const { readLedger, COMMIT_AUTHORITY } = await import(
+  new URL('../collector/ledger.mjs', import.meta.url).href
+);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const LAB = join(ROOT, 'incident');
@@ -84,7 +99,6 @@ const FAULTS_MJS = join(ROOT, 'incident/faults/faults.mjs');
 const LAB_PATHS = JSON.parse(
   readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
 );
-const WORKSPACE = LAB_PATHS.workspaceRoot;
 /**
  * 夹具自己的部署台账。
  *
@@ -98,7 +112,6 @@ const WORKSPACE = LAB_PATHS.workspaceRoot;
  * 「这一轮发布了什么」就变成一个跨靶子的问题了。
  */
 const FIXTURE_LEDGER = LAB_PATHS.fixtureLedger;
-const WS_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
 const MINICLAW = 'http://127.0.0.1:3000';
 
 const args = process.argv.slice(2);
@@ -124,6 +137,34 @@ const DESCRIPTOR = resolveTarget(TARGET_SPEC);
 const PROFILE = targetProfile(DESCRIPTOR, DESCRIPTOR ? process.env : {});
 const REAL_MODE = PROFILE.mode === 'descriptor';
 
+/**
+ * 这一轮用哪个工作区、哪个会话。
+ *
+ * 合成夹具与真实靶子**各有一套工作区**：夹具工作区里是合成源码，真实工作区里
+ * 是靶子源码的快照。混用的话，Agent 诊断的就不是被诊断的那个东西——
+ * 而且这种混用不报错，报告读起来照样很有道理。
+ */
+const WORKSPACE = REAL_MODE
+  ? LAB_PATHS.realWorkspaceRoot
+  : LAB_PATHS.workspaceRoot;
+const WS_JID = REAL_MODE
+  ? LAB_PATHS.realGroupJid
+  : 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
+
+/**
+ * 真实靶子的启动规格（仓库外）。
+ *
+ * 规格里写着故障旋钮——它是这一轮的答案键的一部分，所以它既不在仓库里，
+ * 也不在 Agent 的工作区里。找不到规格就报错，不静默退回夹具那一套。
+ */
+let LAUNCH_SPEC = null;
+if (REAL_MODE) {
+  // 启动规格以 lab-paths.json 为准（唯一真相源）：描述文件里可以不写。
+  LAUNCH_SPEC = loadSpec(LAB_PATHS.realLaunchSpec ?? PROFILE.launchSpec);
+  // 台账路径同样以 lab-paths.json 为准。
+  PROFILE.ledgerPath = LAB_PATHS.realLedger;
+}
+
 const TARGET = PROFILE.actuatorBaseUrl;
 const PROM = PROFILE.prometheusUrl;
 const APP_LABEL = applicationLabel(PROFILE);
@@ -131,7 +172,14 @@ const RATIO_QUERY =
   `sum(rate(http_server_requests_seconds_count{application="${APP_LABEL}",status=~"5.."}[1m]))` +
   `/clamp_min(sum(rate(http_server_requests_seconds_count{application="${APP_LABEL}"}[1m])),0.001)`;
 
-const FAULT = opt('--fault', 'F4');
+/**
+ * 这一轮注入的故障编号。
+ *
+ * 真实靶子的故障编号来自启动规格（规格在仓库外）：合成夹具那边是命令行给的
+ * F2/F4，真实这边是「R1」这一类**真实靶子自己的**故障，不能借用 F4——
+ * 那一栏写着 F4，读的人会以为这一轮注入的是夹具那个超时旋钮。
+ */
+const FAULT = REAL_MODE ? (LAUNCH_SPEC.faultId ?? 'R1') : opt('--fault', 'F4');
 const DRY_RUN = flag('--dry-run');
 const NO_RESTORE = flag('--no-restore');
 /**
@@ -148,7 +196,9 @@ const CAP_MS = Number(opt('--cap-ms', 1800000));
  * 都会落在窗口边缘，后续任何「按时间对齐」的推理都会被这条脆弱的边界影响。
  * 18 分钟让缺陷提交在注入时刻至少已经 18 分钟，超出窗口 3 分钟。
  */
-const SETTLE_MS = Number(opt('--settle-ms', 18 * 60 * 1000));
+const SETTLE_MS = Number(
+  opt('--settle-ms', REAL_MODE ? 5 * 60 * 1000 : 18 * 60 * 1000),
+);
 
 const now = new Date();
 const STAMP = `${now.toISOString().slice(0, 10)}T${now.toISOString().slice(11, 16).replace(':', '')}Z`;
@@ -313,9 +363,11 @@ function digAgentApiErrors(agentStartIso) {
 
 const manifest = {
   stamp: STAMP,
-  // 真实靶子轮次没有合成夹具的故障类型——写「none」，别写 F4：
-  // 那一栏写着 F4，读的人会以为这一轮真的注入过 F4。
-  fault: REAL_MODE ? 'none（真实靶子不注入合成故障）' : FAULT,
+  // 真实靶子轮次注入的是**它自己的**故障（运行时配置旋钮），不是夹具那套：
+  // 那一栏写着 F4，读的人会以为这一轮注入过夹具的超时旋钮。
+  fault: REAL_MODE
+    ? `${FAULT}：${LAUNCH_SPEC?.faultTitle ?? '真实靶子的运行时配置故障'}`
+    : FAULT,
   /**
    * 这一轮打的是哪个靶子。合成夹具是 builtin（没有描述文件），真实靶子是
    * descriptor（描述文件在仓库外，所以这里只有代号与路径，不含任何内部信息）。
@@ -348,7 +400,10 @@ const manifest = {
   channel_audit: null,
   restore: null,
   score: null,
-  deploy_ledger: { ledger: FIXTURE_LEDGER, entries: [] },
+  deploy_ledger: {
+    ledger: REAL_MODE ? PROFILE.ledgerPath : FIXTURE_LEDGER,
+    entries: [],
+  },
   provider_probes: [],
   round_valid: true,
   invalid_reason: null,
@@ -570,6 +625,10 @@ async function recreate() {
  * digest 用本地镜像 id（docker 的内容哈希，和镜像库 digest 同一类身份）。
  */
 function recordDeployment(phase, { soft = false } = {}) {
+  // 真实靶子是宿主形态：主键是部署单元的 tree hash，不是镜像 id。
+  // 两种形态的观测字段不同，写法也不同——共用一套会把「同一个制品
+  // 重启了」写成「发了一个新版本」。
+  if (REAL_MODE) return recordRealDeployment(phase, { soft });
   const abort = (msg) => {
     if (soft) {
       invalidate(msg);
@@ -655,13 +714,25 @@ function publishLedgerEnv(folder) {
     customEnv.DEPLOY_LEDGER = ledger;
     customEnv.PROMETHEUS_URL = PROFILE.prometheusUrl;
     customEnv.TARGET_URL = PROFILE.actuatorBaseUrl;
+    // 观测 CLI 在**真实工作区**里（夹具那份在另一个工作区）。
+    customEnv.INCIDENT_LAB = LAB_PATHS.realReadonlyCli;
     if (PROFILE.measuredLogsDir) customEnv.LOG_DIR = PROFILE.measuredLogsDir;
+    // 描述文件：CLI 的靶子形态（host / container）、指标应用标签、
+    // 日志文件名与 git 通道的仓库路径，全都在描述文件里。
+    // 不给的话 CLI 会退回内置默认值（容器形态 + 9090/8080），
+    // 读起来毫无异样——`runtime env` 会去读一个**别的**容器的环境。
+    if (DESCRIPTOR?.__file) customEnv.INCIDENT_TARGET_FILE = DESCRIPTOR.__file;
   } else {
     customEnv.DEPLOY_LEDGER = ledger;
     // 夹具轮次要把真实靶子那一轮留下的通道地址**擦掉**。
     // 否则下一轮夹具的 Agent 会去读真实靶子的日志、查真实靶子的 Prometheus——
     // 合成夹具的证据里混进真实项目的日志，而且不报错。
-    for (const key of ['PROMETHEUS_URL', 'TARGET_URL', 'LOG_DIR']) {
+    for (const key of [
+      'PROMETHEUS_URL',
+      'TARGET_URL',
+      'LOG_DIR',
+      'INCIDENT_TARGET_FILE',
+    ]) {
       delete customEnv[key];
     }
   }
@@ -962,44 +1033,463 @@ const FAULTS = {
  * 真实靶子轮次的「故障规格」。
  *
  * 合成夹具那套规格注入的是**合成靶子的缺陷**（改源码、改旋钮、重建容器）。
- * 真实靶子上没有这一套：真实项目的注入手段是另一件事（REAL-TARGET.md 第 2 步），
- * 还没做。所以这里给一个**什么都不注入**的规格，并把「没有注入故障」这件事
- * 写进 manifest——不让任何人把一轮「没炸的」轮次读成「测过了」。
+ * 真实靶子的注入手段是另一件事：真实项目不能改源码（改了就不是真实项目了），
+ * 所以这一轮注入的是**运行时配置层**的故障——改一个环境变量，让进程带着它重启。
+ *
+ * 这与夹具的 F4 是同一类：代码一行没动，制品还是同一个制品，
+ * 所以「发布/代码变更」不可能是触发源，触发源只能在运行时配置层。
+ *
+ * 故障旋钮本身写在**仓库外**的启动规格里（`faultEnv`）：
+ * 那是这一轮的答案键，不能进仓库，也不能进 Agent 的工作区。
+ *
+ * 为什么注入要重启进程：Spring Boot 的健康检查阈值在启动时绑定到 Bean 上，
+ * 改环境变量不会让已经在跑的进程改口。要让旋钮生效，只能重启——
+ * 而「重启」这件事本身会被台账记成一条新的观测（同一个 digest、新的启动时刻），
+ * 这正是这一轮要考的东西：**制品没变，变了的是运行时环境**。
  */
 const REAL_SPEC = {
-  title: '真实靶子（不注入合成故障）',
+  title: '真实靶子：运行时配置旋钮（健康检查的磁盘阈值）',
+
+  /**
+   * 窗口不变量：工作区源码快照的 HEAD 落在 15 分钟窗口之外。
+   *
+   * 夹具那边查的是「缺陷提交在窗口外」，因为那一轮的触发源是旋钮、
+   * 代码变更是必要条件——窗口内的提交会让 Agent 有理由去查 diff。
+   * 真实这一轮代码与制品一行没动，同一个道理：源码快照有多旧，
+   * 旧到不可能是这一轮的触发源，就写清楚，免得 Agent 以为快照是新鲜的。
+   */
   async checkWindow() {
-    return { skipped: true, reason: '真实靶子没有合成夹具的故障窗口' };
+    const head = mustSh(
+      `git -C ${LAB_PATHS.realRepoPath} log -1 --format='%h %aI %s'`,
+    ).out.trim();
+    const ageMin =
+      (Date.now() - new Date(head.split(' ')[1]).getTime()) / 60000;
+    if (ageMin < 15) {
+      fail(
+        `工作区源码快照 HEAD ${head} 只有 ${ageMin.toFixed(1)} 分钟前提交，落在 15 分钟窗口内。\n` +
+          '这一轮测的是「Agent 会不会把运行时配置误归因到代码/发布」，' +
+          '而窗口内的提交会让这一轮变成「Agent 会不会做时间对齐」。',
+      );
+    }
+    record(
+      'P8',
+      true,
+      `工作区源码快照 HEAD 在窗口外（${ageMin.toFixed(0)} 分钟前）：${head}`,
+    );
+    return head;
   },
+
+  /**
+   * 静默态：靶子已经按基线跑着（前置那一步拉起来的）。
+   *
+   * 这里只**核对**，不重启：重启一次就多一条「刚刚发过版」的台账观测，
+   * 而这一轮要测的恰恰是 Agent 会不会被那种观测带跑。
+   */
   async setup() {
-    throw new Error(
-      '真实靶子轮次还没有实现故障注入（见 REAL-TARGET.md 第 2 步）',
-    );
+    const status = await healthStatus(LAUNCH_SPEC);
+    if (status !== 200) {
+      fail(
+        `基线态的靶子不健康（/actuator/health = ${status}，期望 200）。台子不对，这一轮不开跑。`,
+      );
+    }
+    const pid = listenPid(LAUNCH_SPEC.port);
+    const startedMs = pid === null ? null : processStartMs(pid);
+    return {
+      note: '基线态：按启动规格跑着，不带故障旋钮（代码与制品都没动）',
+      pid,
+      started_at: startedMs === null ? null : new Date(startedMs).toISOString(),
+      health_status: status,
+      changed: [],
+      unchanged: ['代码', '制品', '运行时旋钮'],
+    };
   },
+
+  /**
+   * 静默态坐稳。
+   *
+   * 和夹具那边不是同一件事，所以默认时长也不同（真实模式 5 分钟，夹具 18 分钟）：
+   *
+   *   · 夹具要等的是「缺陷提交滑出 15 分钟窗口」——那一轮代码变更与旋钮变更
+   *     同时存在，等窗口滑过去是为了让这一轮只测一件事。
+   *   · 真实这一轮代码与制品一行没动，窗口里唯一可能出现的「变更」是**进程重启**，
+   *     而那次重启恰恰是承载配置变更的动作——它躲不开，也不该躲。
+   *     这里要保证的是：基线干净（5xx 比例 0、没有告警 firing），
+   *     并且基线那次启动与注入那次重启是台账里**两条不同的观测**。
+   */
+  async settle() {
+    if (!(await waitHealthyBaseline(120000))) {
+      fail(
+        `基线态 5xx 比例 120 秒内没回到 0（当前 ${await readRatio()}）。` +
+          '上一轮故障的残留没清干净，这一轮不开跑。',
+      );
+    }
+    const alerts = await json(`${PROM}/api/v1/alerts`);
+    const firing = (alerts.data?.alerts ?? []).filter(
+      (a) => a.labels?.alertname === 'HighServerErrorRate',
+    );
+    if (firing.length > 0) {
+      fail('基线态还有 HighServerErrorRate 在 firing——台子不干净。');
+    }
+    const until = Date.now() + SETTLE_MS;
+    const waitMs = until - Date.now();
+    if (waitMs > 0) {
+      log(`  静默态坐稳中：等 ${Math.ceil(waitMs / 1000)} 秒`);
+      await sleep(waitMs);
+    }
+    return {
+      settle_ms: SETTLE_MS,
+      waited_ms: Math.max(0, Math.round(waitMs)),
+      baseline_ratio: 0,
+      baseline_alert_firing: false,
+    };
+  },
+
+  /**
+   * 注入：按故障态的环境变量重启进程。
+   *
+   * 旋钮走**进程环境**，不走命令行——环境不进 argv，也就不会出现在
+   * `ps` 输出、启动日志和 transcript 里；而 `runtime env` 这条通道读的
+   * 正是进程环境，旋钮就摆在那里等着被看见。
+   */
   async inject() {
-    throw new Error(
-      '真实靶子轮次还没有实现故障注入（见 REAL-TARGET.md 第 2 步）',
-    );
+    const faultEnv = LAUNCH_SPEC.faultEnv ?? {};
+    const knobs = Object.keys(faultEnv);
+    if (knobs.length === 0) {
+      fail(
+        '启动规格里没有故障旋钮（faultEnv 是空的）——这一轮不会注入任何东西。',
+      );
+    }
+    const stopped = await stopTarget(LAUNCH_SPEC);
+    if (!stopped.stopped) {
+      fail(`停不掉基线态的靶子：${stopped.why}`);
+    }
+    startTarget(LAUNCH_SPEC, { env: { ...baselineEnv(), ...faultEnv } });
+    const ready = await waitReady(LAUNCH_SPEC, {
+      expectedStatus: 503,
+      timeoutMs: 300000,
+    });
+    if (!ready.ready) {
+      fail(
+        `注入后靶子没有进入故障态（/actuator/health 期望 503，实际 ${ready.status}）：${ready.why}\n` +
+          '  注入没生效就不跑 Agent——那会变成一轮「在没故障的台子上测诊断」。',
+      );
+    }
+    return {
+      changed: knobs,
+      unchanged: ['代码', '制品', '制品 digest'],
+      probe: `注入后 /actuator/health = ${ready.status}`,
+      note: '只改运行时旋钮（进程环境），代码与制品一行没动；进程重启让旋钮生效',
+    };
   },
+
+  /** 恢复：按基线态的环境变量重启进程，并把 5xx 比例等回 0。 */
   async restore() {
-    return { skipped: true };
+    const stopped = await stopTarget(LAUNCH_SPEC);
+    if (!stopped.stopped) {
+      fail(`停不掉故障态的靶子：${stopped.why}`);
+    }
+    startTarget(LAUNCH_SPEC, { env: baselineEnv() });
+    const ready = await waitReady(LAUNCH_SPEC, {
+      expectedStatus: 200,
+      timeoutMs: 300000,
+    });
+    if (!ready.ready) {
+      fail(`恢复后靶子没回到健康态：${ready.why}`);
+    }
+    if (!(await waitHealthyBaseline(180000))) {
+      fail(
+        `恢复后 5xx 比例 180 秒内没回到 0（当前 ${await readRatio()}）。` +
+          '实验台不干净，下一轮不能直接开跑。',
+      );
+    }
+    return {
+      to: 'baseline',
+      probe: `恢复后 /actuator/health = ${ready.status}`,
+    };
   },
 };
 
-async function main() {
-  // 真实靶子的轮次现在只允许 dry-run。
-  //
-  // 为什么明确拒绝而不是「照跑一个没有故障的轮次」：那种轮次跑出来的报告
-  // 看起来和有故障的轮次一模一样，读的人看不出这一轮**什么都没测**——
-  // 这正是实验室最怕的那种「看起来有结论」的轮次。
-  if (REAL_MODE && !DRY_RUN) {
+/**
+ * 健康检查探针。
+ *
+ * 为什么需要它：5xx 比例这条告警的分子是「5xx 的请求数」。没有人打健康检查
+ * 的时候，靶子返回 503 也只是一个没人看见的状态——指标里没有 5xx 样本，
+ * 比值永远是 0，告警永远不 firing，这一轮就没有故障可诊断。
+ *
+ * 它是**探针**，不是压测：每秒 1 次、单连接、只打健康检查端点，
+ * 打的是我们自己按规格起在回环上的实验实例。
+ *
+ * 为什么不用「改监控配置加一个健康检查抓取任务」：监控配置是共享资源，
+ * 改它要单独授权；而且由编排脚本自己造流量，可以在 manifest 里说清楚
+ * 「这一轮的健康检查流量来自本地探针，每秒 1 次」——读的人不至于以为
+ * 真实环境里有人在压健康检查。
+ */
+/**
+ * 这一轮的健康检查探针（全局一份）。
+ *
+ * 探针是**这一轮证据面的一部分**，不是台子的常驻设施：
+ * 起在摆静默态之前，停在恢复之后——它打出来的 5xx 样本正是
+ * 「HighServerErrorRate」这条告警的分子。
+ */
+let HEALTH_PROBE = null;
+
+function ensureHealthProbe() {
+  if (HEALTH_PROBE) return HEALTH_PROBE;
+  HEALTH_PROBE = startHealthProbe(
+    `http://127.0.0.1:${LAUNCH_SPEC.port}${LAUNCH_SPEC.healthPath}`,
+  );
+  log(
+    `  健康检查探针已起：每秒 1 次打 ${LAUNCH_SPEC.healthPath}` +
+      '（探针，不是压测：单连接、只打体检端点）',
+  );
+  return HEALTH_PROBE;
+}
+
+function stopHealthProbe() {
+  if (!HEALTH_PROBE) return;
+  log(`  健康检查探针已停：${JSON.stringify(HEALTH_PROBE.stats())}`);
+  HEALTH_PROBE.stop();
+  HEALTH_PROBE = null;
+}
+
+/**
+ * 台账里这个 digest 的 commit 由谁说了算。
+ *
+ * commit 不自己编：宿主形态的靶子没有 CI 记录可读，能说的只有
+ * 「台账里已经有这么一条，而且它的 commit 来源比别的来源更硬」。
+ * 台账里没有 → 写 null（「没查到」），不是「没有 commit」。
+ */
+function ledgerCommitFor(digest) {
+  let best = null;
+  for (const row of readLedger(PROFILE.ledgerPath)) {
+    if (row.digest !== digest) continue;
+    if (!row.commit) continue;
+    const authority = COMMIT_AUTHORITY[row.commit_source] ?? 0;
+    if (!best || authority > best.authority) {
+      best = { authority, commit: row.commit, source: row.commit_source };
+    }
+  }
+  return best;
+}
+
+/**
+ * 写一条**宿主形态**的发布观测到台账。
+ *
+ * 与夹具那边的差别：夹具的主键是镜像 id，宿主形态的主键是**部署单元的
+ * tree hash**（制品目录整体）。同一个制品重启一次，主键不变、启动时刻变，
+ * 于是台账里多一条观测——读侧按 (digest, 启动时刻) 分桶就知道
+ * 「同一个制品被重启过」，而不是「发过两个版本」。
+ *
+ * 这一条必须**如实**写：少写一条，Agent 就看不到「刚刚重启过」；
+ * 多写一条，它就会把「台账里多了几行」当成「发过好几个版本」。
+ */
+function recordRealDeployment(phase, { soft = false } = {}) {
+  const abort = (msg) => {
+    if (soft) {
+      invalidate(msg);
+      log(`  ⚠ ${msg}`);
+      return null;
+    }
+    fail(msg);
+    return null;
+  };
+  const pid = listenPid(LAUNCH_SPEC.port);
+  if (pid === null) {
+    abort(
+      '端口上没有监听进程，写不了发布观测——' +
+        '采集失败不能被当成「这一轮没有发布」，那是相反的结论。',
+    );
+    return null;
+  }
+  let observation;
+  try {
+    observation = hostObservation({
+      artifactDir: LAUNCH_SPEC.artifactDir,
+      pid,
+    });
+  } catch (err) {
+    abort(`读不到宿主形态的部署事实，写不了发布观测：${err.message}`);
+    return null;
+  }
+  const known = ledgerCommitFor(observation.digest);
+  const entry = toLedgerEntry(
+    {
+      ...observation,
+      commit: known?.commit ?? null,
+      commit_source: known?.source ?? null,
+    },
+    { deployedBy: 'host' },
+  );
+  mkdirSync(dirname(PROFILE.ledgerPath), { recursive: true });
+  const res = writeEntries(PROFILE.ledgerPath, [entry]);
+  if (res.conflicts.length > 0) {
+    abort(
+      `台账冲突：同一个 digest 出现互斥的记录：${JSON.stringify(res.conflicts)}`,
+    );
+    return null;
+  }
+  manifest.deploy_ledger.entries.push({
+    phase,
+    digest: entry.digest,
+    image_ref: entry.image_ref,
+    commit: entry.commit,
+    commit_source: entry.commit_source,
+    built_at: entry.built_at,
+    pod_started_at: entry.pod_started_at,
+    appended: res.appended.length,
+    skipped: res.skipped.length,
+    superseded: res.superseded.length,
+  });
+  log(
+    `  已写发布观测（${phase}）：${entry.digest} commit=${entry.commit ?? '(台账里还没有 commit)'} 起于 ${entry.pod_started_at}`,
+  );
+  return entry;
+}
+
+/**
+ * 基线态的进程环境：规格里的基线环境，**外加把故障旋钮显式抹掉**。
+ *
+ * 为什么显式抹：编排脚本自己的进程环境可能带着故障旋钮
+ * （上一次手工起靶子时导出过），那样基线态会带着旋钮跑起来，
+ * 「注入」就变成了一句空话，而报告会把一个根本没注入的故障说成真故障。
+ */
+function baselineEnv() {
+  const env = { ...(LAUNCH_SPEC.baselineEnv ?? {}) };
+  for (const key of Object.keys(LAUNCH_SPEC.faultEnv ?? {})) env[key] = null;
+  return env;
+}
+
+/**
+ * 把靶子拉回**基线态**（不带故障旋钮），并把这次观测记进台账。
+ *
+ * 三件事按顺序：
+ *   1. 端口上已经在跑而且健康 → 不重启。多一次重启就多一条「刚刚发过版」
+ *      的观测，而这一轮要测的恰恰是 Agent 会不会被那种观测带跑。
+ *   2. 端口上跑着但**不健康**（多半是上一轮留下的故障态）→ 先停掉它。
+ *      停法只有一种：找到监听进程，只对它发信号。
+ *   3. 拉起来，等它真的健康（200），再记观测。
+ */
+async function ensureRealBaseline() {
+  const pid = listenPid(LAUNCH_SPEC.port);
+  if (pid !== null) {
+    const status = await healthStatus(LAUNCH_SPEC);
+    if (status === 200) {
+      recordRealDeployment('baseline');
+      return { restarted: false, pid, status };
+    }
+    log(`  端口上的靶子不健康（${status}），先停掉它`);
+    const stopped = await stopTarget(LAUNCH_SPEC);
+    if (!stopped.stopped) {
+      fail(`停不掉现有的靶子进程：${stopped.why}`);
+    }
+  }
+  startTarget(LAUNCH_SPEC, { env: baselineEnv() });
+  const ready = await waitReady(LAUNCH_SPEC, {
+    expectedStatus: 200,
+    timeoutMs: 300000,
+  });
+  if (!ready.ready) {
     fail(
-      '真实靶子的轮次目前只支持 --dry-run。\n' +
-        '  原因：真实靶子没有合成夹具那套故障注入（改源码/改旋钮/重建容器），\n' +
-        '  真实项目的注入手段是另一件事，见 incident/REAL-TARGET.md 第 2 步。\n' +
-        '  没有故障的一轮不是成绩——它只是证明台子能跑起来。',
+      `基线态拉不起来（/actuator/health 期望 200，实际 ${ready.status}）：${ready.why}`,
     );
   }
+  recordRealDeployment('baseline');
+  return { restarted: true, pid: listenPid(LAUNCH_SPEC.port), status: 200 };
+}
+
+/**
+ * 真实这一轮的工作区记忆必须**结构性地**为空。
+ *
+ * 夹具那边这一步是 memory-de-leak.mjs：把固定的两行 lesson/open_loop 改写掉。
+ * 真实这一轮没有那两行，改写脚本用不上；但「记忆面为空」这条判据不能跟着
+ * 消失——漏扫的面和没有面的区别，正是这个项目最贵的那次教训。
+ * 所以这里换成一条**显式检查**：直接查表（不按 status 过滤，软删的正文也算），
+ * 非空就中止。
+ *
+ * 顺带把「工作区 jid → folder → 同 folder 的全部 jid」这件事重算一遍，
+ * 与泄漏扫描用的是同一套口径。
+ */
+function assertRealMemoryEmpty() {
+  const require = createRequire(import.meta.url);
+  const Database = require('better-sqlite3');
+  const db = new Database(join(ROOT, 'data/db/messages.db'), {
+    readonly: true,
+  });
+  try {
+    const grp = db
+      .prepare('SELECT folder FROM registered_groups WHERE jid = ?')
+      .get(WS_JID);
+    if (!grp?.folder) fail(`工作区 ${WS_JID} 没有登记 folder，记忆面无从核对`);
+    const jids = new Set(
+      db
+        .prepare('SELECT jid FROM registered_groups WHERE folder = ?')
+        .all(grp.folder)
+        .map((r) => r.jid),
+    );
+    for (const a of db
+      .prepare('SELECT chat_jid, id FROM agents WHERE group_folder = ?')
+      .all(grp.folder)) {
+      jids.add(`${a.chat_jid}#agent:${a.id}`);
+    }
+    const rows = db
+      .prepare(
+        `SELECT workspace_jid, id, kind, status, title FROM workspace_memory_items
+          WHERE workspace_jid IN (${[...jids].map(() => '?').join(',')})`,
+      )
+      .all(...jids);
+    if (rows.length) {
+      fail(
+        `工作区记忆非空（${rows.length} 条）：\n` +
+          rows
+            .map(
+              (r) =>
+                `  - ${r.workspace_jid}/${r.kind}/${r.status}/${r.id} ${r.title ?? ''}`,
+            )
+            .join('\n') +
+          '\nclear-history 之后记忆面必须为空。这不是「改写」能解决的：真实这一轮' +
+          '没有夹具那两行可改写，非空就说明清理没生效。',
+      );
+    }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+function startHealthProbe(url, { intervalMs = 1000 } = {}) {
+  let stopped = false;
+  let requests = 0;
+  let errors = 0;
+  const timer = setInterval(() => {
+    if (stopped) return;
+    fetch(url)
+      .then(() => {
+        requests += 1;
+      })
+      .catch(() => {
+        errors += 1;
+      });
+  }, intervalMs);
+  timer.unref?.();
+  return {
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+    },
+    stats() {
+      return { requests, errors, interval_ms: intervalMs, url };
+    },
+  };
+}
+
+async function main() {
+  // 真实靶子的轮次注入的是**运行时配置层**的故障：改一个环境变量，
+  // 让同一个制品的进程带着它重启。代码一行没动，制品还是那个制品——
+  // 所以「发布/代码变更」在物理上就不可能是触发源，这一轮考的就是
+  // Agent 会不会被「刚刚发过版」的表象带跑。
+  //
+  // 合成夹具那套注入（改源码 / 改旋钮 / 重建容器）在真实靶子上**不适用**：
+  // 改源码就不叫真实项目了。所以两边的注入路径必须分开写，不能共用一套。
 
   const spec = REAL_MODE ? REAL_SPEC : FAULTS[FAULT];
   if (!spec)
@@ -1015,6 +1505,24 @@ async function main() {
 
   if (REAL_MODE) {
     // 真实靶子用另一套前置闸门（问的问题不一样，见 runs/target-preflight.mjs）。
+    //
+    // 闸门之前先把靶子摆到基线态：闸门里的 P1 要量「actuator 体检返回 200」，
+    // P2 要量「靶子进程自己持有那些日志文件」——靶子没跑起来，这两条问不出
+    // 任何东西。dry-run 不碰靶子：它只验证闸门本身能不能过。
+    if (DRY_RUN) {
+      if (listenPid(LAUNCH_SPEC.port) === null) {
+        fail(
+          'dry-run 需要靶子已经跑着（前置闸门要量它的体检端点与日志句柄）。\n' +
+            '  先按启动规格把它拉起来：规格在仓库外，见 incident/REAL-TARGET.md。',
+        );
+      }
+    } else {
+      manifest.target = {
+        ...manifest.target,
+        baseline: await ensureRealBaseline(),
+      };
+      ensureHealthProbe();
+    }
     const { gates, facts } = await realTargetPreflight(PROFILE, realDeps);
     manifest.target = { ...manifest.target, facts };
     // 实测出来的日志目录（靶子进程自己持有的那些日志文件在哪）。
@@ -1160,7 +1668,7 @@ async function main() {
     true,
     `工作区就位（custom_cwd=${grp.custom_cwd}，folder=${grp.folder}）` +
       (REAL_MODE
-        ? `——⚠ 这还是**合成夹具**的工作区（里面是夹具的源码，不是靶子的仓库）。真实靶子轮次要换成靶子仓库的工作区，见 REAL-TARGET.md 第 3 步；本轮是 dry-run，Agent 不跑。`
+        ? '——真实靶子的工作区（里面是靶子源码的快照，与合成夹具的工作区不是同一个）'
         : ''),
   );
 
@@ -1240,7 +1748,15 @@ async function main() {
   manifest.setup = await spec.setup();
   // 静默态本身就是一次部署（重建镜像 + 重建容器）。不写这一条，
   // Agent 在窗口里问「有没有发布」时读到的是空台账。
-  recordDeployment('setup');
+  //
+  // 真实靶子不在这里写：基线态那次启动的观测在前置步骤已经记过了
+  // （ensureRealBaseline）。同一个进程记两次会在台账里多出一行
+  // 「刚才又重启了一次」——那不是观测，是重复计数。
+  if (REAL_MODE) {
+    log('  基线态的发布观测已在前置步骤记过（同一个进程不重复记）');
+  } else {
+    recordDeployment('setup');
+  }
   log(`  ${manifest.setup.note ?? '静默态就位'}`);
 
   // ───────────────────────────────────────────────────────────
@@ -1261,12 +1777,27 @@ async function main() {
     fail(`clear-history 返回 ${clear.status}：${await clear.text()}`);
   log('  聊天历史已清（连带工作区记忆与 session 目录）');
 
-  mustSh(`${NODE} incident/runs/memory-de-leak.mjs`);
+  if (REAL_MODE) {
+    // 真实这一轮没有「同步夹具 Profile / 同步夹具工作区的 CLI」那两步：
+    // sync-agent-profile.mjs 写死的是夹具的 profile id 与 identity.json，
+    // sync-tools.mjs 写的也是夹具工作区那份 CLI。真实这一轮对应的是
+    // setup-real-workspace.mjs（幂等：按名字找现有的 Profile 与工作区，找到就更新）。
+    mustSh(`${NODE} incident/runs/setup-real-workspace.mjs`);
+    // 记忆面：不改写、只核对——真实这一轮没有夹具那两行可改写，
+    // 「记忆面为空」这条判据必须显式验，不能跟着改写脚本一起消失。
+    const memoryRows = assertRealMemoryEmpty();
+    log(`  工作区记忆面核对：${memoryRows} 条（非空即中止）`);
+  } else {
+    mustSh(`${NODE} incident/runs/memory-de-leak.mjs`);
+    mustSh(`${NODE} incident/runs/sync-agent-profile.mjs`);
+    mustSh(`${NODE} incident/runs/sync-tools.mjs`);
+  }
+  // Skill 两套轮次共用同一份源（incident/skills/），同步与轮次无关。
   mustSh(`${NODE} incident/runs/sync-skills.mjs`);
-  mustSh(`${NODE} incident/runs/sync-agent-profile.mjs`);
-  mustSh(`${NODE} incident/runs/sync-tools.mjs`);
 
-  const scan = sh(`${NODE} incident/runs/leak-scan.mjs`);
+  const scan = sh(
+    `${NODE} incident/runs/leak-scan.mjs${REAL_MODE ? ' --real' : ''}`,
+  );
   if (scan.code !== 0)
     fail(`泄漏扫描没过（exit ${scan.code}）：\n${scan.out}\n${scan.err}`);
   log('  泄漏扫描：0 命中');
@@ -1370,14 +1901,14 @@ async function main() {
 
   writeFileSync('/tmp/mc-cookie.txt', cookie);
   const agentStart = new Date().toISOString();
+  // 提示词也分两套：合成夹具那份提到夹具自己的名词（订单端点、压测探针），
+  // 真实靶子那份说的是「体检、告警、指标标签」，而且**不出现任何内部名字**。
+  const promptFile = REAL_MODE
+    ? 'incident/runs/diag-prompt-real.txt'
+    : 'incident/runs/diag-prompt.txt';
   const ws = spawnSync(
     NODE,
-    [
-      'incident/runs/ws-run.mjs',
-      WS_JID,
-      'incident/runs/diag-prompt.txt',
-      String(CAP_MS),
-    ],
+    ['incident/runs/ws-run.mjs', WS_JID, promptFile, String(CAP_MS)],
     {
       cwd: ROOT,
       encoding: 'utf8',
@@ -1445,7 +1976,11 @@ async function main() {
     }
   }
   if (transcript) {
-    const dest = join(RUNS, 'session-transcripts', transcript.split('/').pop());
+    const dest = join(
+      OUT_DIR,
+      'session-transcripts',
+      transcript.split('/').pop(),
+    );
     mkdirSync(dirname(dest), { recursive: true });
     copyFileSync(transcript, dest);
     manifest.agent.transcript = dest;
@@ -1488,8 +2023,13 @@ async function main() {
     invalidate('通道审计没跑（没有 transcript）');
     log('  审计没跑：没找到 transcript');
   } else {
+    // 真实靶子这一轮换一套证据面与答案键（工作区、日志目录、真值、启动规格）。
+    // 不换的话，Agent 读到真值或故障旋钮，审计却判成 clean。
     const audit = sh(
-      `${NODE} incident/runs/channel-audit.mjs ${transcript} --json`,
+      `${NODE} incident/runs/channel-audit.mjs ${transcript} --json` +
+        (REAL_MODE
+          ? ` --real --logs-dir ${PROFILE.measuredLogsDir ?? '/nonexistent'}`
+          : ''),
     );
     try {
       manifest.channel_audit = JSON.parse(audit.out);
@@ -1521,7 +2061,12 @@ async function main() {
   // 分数先落盘，恢复失败就不会把一整轮的结论一起吞掉。
   section('打分');
 
-  const truthPath = join(RUNS, 'ground-truth', `${FAULT}.json`);
+  // 真值（答案键）。合成夹具的真值在仓库里（它是量具的一部分）；
+  // 真实靶子的真值在**仓库外**——它写的是真实项目的故障机制，
+  // 而仓库是公开的。
+  const truthPath = REAL_MODE
+    ? join(LAB_PATHS.realTruthDir, `${FAULT}.json`)
+    : join(RUNS, 'ground-truth', `${FAULT}.json`);
   if (!existsSync(truthPath)) fail(`找不到真值文件：${truthPath}`);
   const truth = JSON.parse(readFileSync(truthPath, 'utf8'));
   const score = scoreReport(readFileSync(REPORT_PATH, 'utf8'), truth, {
@@ -1579,6 +2124,10 @@ async function main() {
   }
   restoreDone = true;
 
+  // 探针停在这一轮的最后：恢复过程本身要靠它把 5xx 比例等回 0，
+  // 所以不能提前停。
+  stopHealthProbe();
+
   manifest.finished_at = new Date().toISOString();
   writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
 
@@ -1596,6 +2145,9 @@ async function main() {
 
 main().catch(async (err) => {
   console.error(`\n✗ 本轮中止：${err.message}\n`);
+
+  // 探针先停：它是我们自己起的流量，中止之后不该继续打靶子。
+  stopHealthProbe();
 
   // 中止也要恢复实验台。否则故障留在台子上：下一轮的前置闸门会拦下来，
   // 但如果没人看 manifest，服务会一直 500、告警一直 firing。

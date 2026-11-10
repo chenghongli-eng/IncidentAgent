@@ -87,6 +87,30 @@ const REPO =
   new URL('../target-service/', import.meta.url).pathname;
 const CONTAINER =
   process.env.TARGET_CONTAINER ?? DESCRIPTOR?.container ?? 'target-service';
+/**
+ * 靶子以什么形态跑：`container`（默认）还是 `host`（宿主机上的进程）。
+ *
+ * 为什么必须由描述文件说了算，而不是「`docker inspect` 查得到就用容器」：
+ * 探针查得到与否跟**这个靶子**无关——本机恰好有个同名容器，
+ * 通道就会去读**那个**容器的环境，读出一份与靶子无关的旋钮值，
+ * 而且读起来毫无异样（这是比「读不到」更坏的一种失效）。
+ */
+const RUNTIME_FORM = DESCRIPTOR?.runtimeForm ?? 'container';
+
+/**
+ * 宿主机形态的靶子**没有容器这一层**，别给它安一个容器名。
+ *
+ * 为什么要较这个真：本机上恰好可能有个同名的容器（比如夹具留下的
+ * target-service）。给一个宿主机进程报出容器名，Agent 会顺着这个名字去
+ * `docker inspect`——读到的是**别的**容器的环境，读起来毫无异样。
+ * 报「没有容器」比报一个错名字诚实。
+ */
+function containerLabel() {
+  return RUNTIME_FORM === 'host'
+    ? '(n/a: target runs as a host process)'
+    : CONTAINER;
+}
+
 const APP_STARTED_PATTERN =
   DESCRIPTOR?.appStartedPattern ?? 'Started TargetServiceApplication';
 
@@ -417,18 +441,22 @@ const channel = args.shift();
  * 2026-11-04 那轮报告的锚点 ② 就是这么错的（第 3 次犯这一类）。
  */
 function startAnchor() {
-  try {
-    const raw = execFileSync(
-      'docker',
-      ['inspect', CONTAINER, '--format', '{{.State.StartedAt}}'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    ).trim();
-    const ms = Date.parse(raw);
-    if (!Number.isNaN(ms)) return { ms, source: 'docker inspect' };
-  } catch {
-    // A target that is not a local container (a service running on a
-    // developer's machine) has no docker inspect to ask. The process itself
-    // knows when it started.
+  // 宿主机形态的靶子不查 docker：本机恰好有个同名容器的话，
+  // 查到的会是**那个**容器的启动时刻——一个与靶子无关的时间锚点。
+  if (RUNTIME_FORM !== 'host') {
+    try {
+      const raw = execFileSync(
+        'docker',
+        ['inspect', CONTAINER, '--format', '{{.State.StartedAt}}'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      ).trim();
+      const ms = Date.parse(raw);
+      if (!Number.isNaN(ms)) return { ms, source: 'docker inspect' };
+    } catch {
+      // A target that is not a local container (a service running on a
+      // developer's machine) has no docker inspect to ask. The process itself
+      // knows when it started.
+    }
   }
   const host = hostProcessAnchor();
   if (host) return host;
@@ -537,6 +565,152 @@ function containerStartedAt() {
   return startAnchor().ms;
 }
 
+/**
+ * 运行时旋钮的**生效值**，从一个宿主机进程上取。
+ *
+ * 为什么要有：容器形态的靶子可以 `docker inspect` 拿到容器环境，
+ * 宿主机形态的靶子没有这一层——`runtime env` 只能报
+ * 「container_env: (unavailable)」。这不是「靶子没有旋钮」，
+ * 是**这条通道对宿主机形态失明了**：进程实实在在带着
+ * `--spring.datasource.dynamic.druid.max-wait=1` 跑着，
+ * 而 Agent 从这条通道看不到它。于是「旋钮被改过」这类根因在宿主机靶子上
+ * **没法被证据支撑**，只能靠猜。
+ *
+ * 取的是进程自己的 argv 与环境——这就是「生效值」的机器来源。
+ *
+ * 脱敏是硬要求，不是锦上添花：宿主形态的进程常常继承了一整套桌面会话环境
+ * （实测 100 个变量），里面混着别人的令牌。全量打印等于把凭据抄给 Agent。
+ * 所以：
+ *   · argv 逐项打印，但形如 `--...password=...` 的**值**要遮掉；
+ *   · 环境**只打印白名单前缀**（应用自己的配置），其余一律不打印；
+ *   · 白名单里的敏感名（password/secret/token/…）照样遮值。
+ */
+const SECRET_WORDS = [
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'token',
+  'credential',
+  'credentials',
+  'encryptor',
+  'encrypt',
+  'jasypt',
+  'apikey',
+  'api-key',
+  'accesskey',
+  'access-key',
+  'secretkey',
+  'secret-key',
+  'privatekey',
+  'private-key',
+  'salt',
+  'signature',
+];
+
+/**
+ * 环境变量里**允许**打印的前缀（应用自己的配置），其余不打印。
+ *
+ * `MANAGEMENT_` 在列：Spring Boot 的 management 命名空间同样是应用自己的配置，
+ * 而且运维类旋钮（健康检查阈值、端点暴露范围）恰恰只在这一个命名空间里。
+ * 少了它，「健康检查被谁改坏了」这类根因在通道上就是瞎的。
+ */
+const ENV_ALLOWED_PREFIXES = [
+  'SPRING_',
+  'APP_',
+  'JAVA_',
+  'JASYPT_',
+  'MANAGEMENT_',
+];
+
+function isSecretName(name) {
+  const lower = String(name).toLowerCase();
+  const flat = lower.replace(/[^a-z0-9]+/g, '-');
+  return SECRET_WORDS.some((w) => flat.includes(w));
+}
+
+/** argv 里的 `--key=value`：只遮住像凭据的那一部分的**值**。 */
+function redactArg(arg) {
+  const eq = arg.indexOf('=');
+  if (eq === -1) return arg;
+  const key = arg.slice(0, eq);
+  if (!isSecretName(key)) return arg;
+  return `${key}=<redacted>`;
+}
+
+function readProcessArgv(pid) {
+  try {
+    const raw = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+    return raw.split('\0').filter((s) => s.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+function readProcessEnv(pid) {
+  let raw;
+  try {
+    raw = readFileSync(`/proc/${pid}/environ`, 'utf8');
+  } catch {
+    return null;
+  }
+  const out = [];
+  for (const entry of raw.split('\0')) {
+    if (!entry) continue;
+    const eq = entry.indexOf('=');
+    if (eq === -1) continue;
+    const name = entry.slice(0, eq);
+    if (!ENV_ALLOWED_PREFIXES.some((p) => name.startsWith(p))) continue;
+    const value = entry.slice(eq + 1);
+    out.push({ name, value: isSecretName(name) ? '<redacted>' : value });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+/**
+ * 宿主机形态靶子的运行时档案。
+ *
+ * 进程由**端口**定位（和 startAnchor 同一口径）：重启之后 pid 会变，
+ * 锚点跟着变。
+ */
+function hostProcessRuntime() {
+  const base = DESCRIPTOR?.actuatorBaseUrl;
+  if (!base) return null;
+  let port;
+  try {
+    port = new URL(base).port;
+  } catch {
+    return null;
+  }
+  if (!port) return null;
+  let pids;
+  try {
+    pids = execFileSync('lsof', [`-ti:${port}`, '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+  for (const pid of pids) {
+    const argv = readProcessArgv(pid);
+    if (!argv || argv.length === 0) continue;
+    const env = readProcessEnv(pid);
+    const startMs = procStartMs(pid);
+    return {
+      pid,
+      argv,
+      env: env ?? [],
+      started_at: startMs === null ? null : new Date(startMs).toISOString(),
+    };
+  }
+  return null;
+}
+
 const usage = `incident-readonly <channel> [options]
 
 channels (all read-only):
@@ -564,7 +738,9 @@ channels (all read-only):
   git    show    <ref>                        commit metadata and changed files
   git    file    <ref>:<path>                 file content at a revision
   actuator <endpoint>                         GET a Spring Boot actuator endpoint
-  runtime env                                 runtime knobs effective in the running container
+  runtime env                                 runtime knobs effective in the running container;
+                                               for a host-process target: the process's own
+                                               argv and application env (secrets redacted)
   runtime started                             container start time and application readiness
   deploy current [--tolerance S]               which ledger entry is the rollout now
                                                running: matched on the start anchor
@@ -935,7 +1111,11 @@ async function main() {
       };
 
       if (op === 'env') {
-        const raw = inspectOrNull('{{range .Config.Env}}{{println .}}{{end}}');
+        // 宿主机形态的靶子不去问 docker：问了也只会读到**别的**容器。
+        const raw =
+          RUNTIME_FORM === 'host'
+            ? null
+            : inspectOrNull('{{range .Config.Env}}{{println .}}{{end}}');
         const kv = new Map(
           (raw ?? '')
             .split('\n')
@@ -947,33 +1127,70 @@ async function main() {
                 : [line.slice(0, i), line.slice(i + 1)];
             }),
         );
-        console.log(`container: ${CONTAINER}`);
+        console.log(`container: ${containerLabel()}`);
         if (raw === null) {
           console.log(
-            'container_env: (unavailable: target is not a local container)',
+            RUNTIME_FORM === 'host'
+              ? 'container_env: (unavailable: target runs as a host process)'
+              : 'container_env: (unavailable: target is not a local container)',
           );
         }
-        for (const key of RUNTIME_KNOBS) {
-          const value = kv.get(key);
-          console.log(
-            value === undefined
-              ? `${key}=<not set in container> (compose default applies)`
-              : `${key}=${value}`,
-          );
+        // 宿主机形态没有「compose 默认值」这一层，报「未设置，走默认值」
+        // 是拿容器的模型去解释一个进程：Agent 会以为靶子是容器部署的。
+        if (RUNTIME_FORM !== 'host') {
+          for (const key of RUNTIME_KNOBS) {
+            const value = kv.get(key);
+            console.log(
+              value === undefined
+                ? `${key}=<not set in container> (compose default applies)`
+                : `${key}=${value}`,
+            );
+          }
         }
-        const knob = knobFile();
+        // 旋钮文件是**合成夹具**的机制（那一轮的故障靠改它注入）。
+        // 宿主机形态的靶子没有这一层：旋钮在进程环境里，下面那段会摊开。
+        // 指向一个与本靶子无关的文件不是小事——那份文件里写着**别的**轮次的
+        // 故障设计，Agent 顺着这条提示读过去，就等于拿到了别人的答案。
+        const knob = RUNTIME_FORM === 'host' ? null : knobFile();
         if (knob) {
           console.log(`knob_file: ${knob}`);
           console.log(
             `knob_file_mtime: ${statSync(knob).mtime.toISOString()} (last edit of the knob file)`,
           );
         }
+        // 宿主机形态的靶子没有容器环境这一层。旋钮在进程的 argv 上，
+        // 这一段把它摊开——没有它，「旋钮被改过」在宿主机靶子上不可证。
+        //
+        // 只在 host 形态下走：容器形态去读宿主机进程，读到的是**别的**进程。
+        if (RUNTIME_FORM === 'host') {
+          const proc = hostProcessRuntime();
+          if (!proc) {
+            console.log(
+              'process_runtime: (unavailable: no listening process found for the target port)',
+            );
+          } else {
+            console.log(`process_pid: ${proc.pid}`);
+            console.log(
+              `process_started_at: ${proc.started_at ?? '(unavailable)'}`,
+            );
+            console.log('process_argv:');
+            for (const arg of proc.argv) console.log(`  ${redactArg(arg)}`);
+            console.log('process_env:');
+            if (proc.env.length === 0) {
+              console.log('  (no application configuration variables set)');
+            }
+            for (const e of proc.env) console.log(`  ${e.name}=${e.value}`);
+          }
+        }
         return;
       }
 
       if (op === 'started') {
-        console.log(`container: ${CONTAINER}`);
-        const raw = inspectOrNull('{{.State.StartedAt}}');
+        console.log(`container: ${containerLabel()}`);
+        const raw =
+          RUNTIME_FORM === 'host'
+            ? null
+            : inspectOrNull('{{.State.StartedAt}}');
         if (raw !== null) {
           console.log(`container_started_at: ${raw}`);
           console.log(`container_started_at_source: docker inspect`);
@@ -1093,6 +1310,11 @@ async function main() {
         let hit = null;
         let matched_on = null;
         let rollouts = 0;
+        // The deployments that carry the commit that was looked up. One
+        // commit can be deployed in more than one form (the image it produced,
+        // the artifact unpacked from it), and hiding that would let a reader
+        // take one of them for "the" deployment.
+        let commitDeployments = [];
 
         // The same image can be in the ledger more than once (deployed twice,
         // or observed running, or looked at again by a later poll). Answer with
@@ -1194,9 +1416,34 @@ async function main() {
           hit = pickNewest(digestPrefixMatches);
           matched_on = 'digest prefix';
         }
-        if (!hit && commitPrefixMatches.length === 1) {
-          hit = pickNewest(commitPrefixMatches);
-          matched_on = 'commit prefix';
+        if (!hit && commitPrefixMatches.length > 0) {
+          // A commit can sit on **more than one row** without being
+          // ambiguous: the ledger takes a new row every time the deployment is
+          // observed again (a running poll, a heartbeat), and the same build
+          // can appear in more than one form (the image it produced and the
+          // artifact unpacked from it). Counting rows would make all of those
+          // look like "several different commits" and answer "the ledger has
+          // no such commit" for a commit that is right there -- a false claim
+          // about absence, which is the worst thing this channel can say.
+          //
+          // Ambiguity is measured in **distinct commits**, the same way the
+          // digest side measures it in distinct digests.
+          const commits = new Set(
+            commitPrefixMatches.map((e) => e.commit.toLowerCase()),
+          );
+          if (commits.size === 1) {
+            hit = pickNewest(commitPrefixMatches);
+            const full = commitPrefixMatches[0].commit;
+            matched_on = key.length >= full.length ? 'commit' : 'commit prefix';
+            commitDeployments = [
+              ...new Set(commitPrefixMatches.map(entryDigest).filter(Boolean)),
+            ];
+          } else {
+            return die(
+              `台账前缀有歧义：commit 前缀 ${key} 同时匹配 ${commits.size} 个不同的 commit。\n` +
+                '  请用完整的 commit 查询。',
+            );
+          }
         }
 
         if (!hit) {
@@ -1214,6 +1461,9 @@ async function main() {
           JSON.stringify(
             {
               matched_on,
+              ...(commitDeployments.length > 0
+                ? { matched_deployments: commitDeployments }
+                : {}),
               ledger: LEDGER,
               rollouts: rollouts || 1,
               observations,
@@ -1362,7 +1612,7 @@ async function main() {
             metric_label_aliases: LABEL_ALIASES,
             prometheus: PROMETHEUS,
             actuator: TARGET,
-            container: CONTAINER,
+            container: RUNTIME_FORM === 'host' ? null : CONTAINER,
             repo: REPO,
             logs_dir: LOG_DIR,
             deploy_ledger: LEDGER,

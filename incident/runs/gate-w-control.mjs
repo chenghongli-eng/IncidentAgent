@@ -22,7 +22,13 @@
  *
  * 用法：node incident/runs/gate-w-control.mjs
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+  readFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -250,6 +256,53 @@ try {
       'K 上 1 层有 archive 目录 → 违规（W4）',
       v.some((x) => x.includes('实验室记录目录')),
       v.join(' | ') || '没抓到',
+    );
+  }
+
+  /**
+   * L/M 组：真实靶子那一轮的工作区与提示词。
+   *
+   * 这一轮换的是**另一套**工作区（靶子源码快照）与**另一份**提示词
+   * （identity-real.json）。闸门多了一条 `--real` 的走法，就得证明它
+   * 读的是那一套，而不是悄悄落回合成夹具那一套。
+   *
+   * L 与 M 只差一处：M 把仓库根路径塞进了提示词。两行工作区完全一样，
+   * 所以 L 过、M 挂，才能说明这条走法真的在量提示词。
+   */
+  {
+    const paths = JSON.parse(
+      readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+    );
+    const identity = JSON.parse(
+      readFileSync(
+        new URL('../agent-profile/identity-real.json', import.meta.url),
+        'utf8',
+      ),
+    );
+    const v = checkIsolation({
+      workspaceRoot: paths.realWorkspaceRoot,
+      repoRoot: paths.repoRoot,
+      identity,
+    });
+    check(
+      'L 真实工作区 + identity-real.json → 0 违规',
+      v.length === 0,
+      v.join(' | ') || '无',
+    );
+
+    const poisoned = {
+      ...identity,
+      tools_prompt: `${identity.tools_prompt}\n仓库在 ${paths.repoRoot}`,
+    };
+    const v2 = checkIsolation({
+      workspaceRoot: paths.realWorkspaceRoot,
+      repoRoot: paths.repoRoot,
+      identity: poisoned,
+    });
+    check(
+      'M 同一工作区，提示词里塞进仓库根路径 → 违规（负对照）',
+      v2.some((x) => x.includes('仓库根')),
+      v2.join(' | ') || '没抓到',
     );
   }
 } finally {

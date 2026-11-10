@@ -52,6 +52,12 @@
  * 用法：
  *   node incident/runs/leak-scan.mjs            # 打印报告，命中即 exit 1
  *   node incident/runs/leak-scan.mjs --quiet    # 只在有命中时打印
+ *   node incident/runs/leak-scan.mjs --real     # 真实靶子那一轮：换工作区、换答案词表
+ *
+ * `--real` 换掉三样东西：工作区 jid、源码面（靶子快照而不是合成夹具）、
+ * 以及答案词表（旋钮名/取值，而不是夹具的 F2 缺陷机制）。
+ * 沿用夹具那套词表会同时出两种错：漏（真实轮的答案扫不到）、
+ * 误报（夹具 Profile 里正当出现的类名被当成泄漏）。
  *
  * ⚠️ 必须在**仓库根目录**跑：它用相对路径定位工作区、从 CWD 找数据库。
  *
@@ -62,7 +68,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 
@@ -77,18 +83,38 @@ try {
   Database = null;
 }
 
-const WORKSPACE_JID = 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
-const USER_ID = '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4';
-const REPO = JSON.parse(
+const LAB_PATHS = JSON.parse(
   readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
-).serviceDir;
+);
+/**
+ * 真实靶子这一轮扫的是**另一套面**。
+ *
+ * 合成夹具那套面是「夹具源码 + 夹具工作区 + 夹具故障词表」。真实这一轮
+ * 的面是「靶子源码快照 + 靶子工作区 + 这一轮自己的答案词表」——
+ * 沿用夹具那套会同时出两种错：扫不到真实轮次的答案（漏），
+ * 以及把夹具 Profile 里正当出现的类名当成泄漏（误报）。
+ * 误报比漏报更坏：闸门一直红，就没人再看它了。
+ */
+const REAL_MODE = process.argv.includes('--real');
+const WORKSPACE_JID = REAL_MODE
+  ? LAB_PATHS.realGroupJid
+  : 'web:8ff36e4b-e8da-4dfd-be0a-b55d70fd9edb';
+const USER_ID = '68fcc7c5-f8ca-4265-acd5-f215f5aa24a4';
+const REPO =
+  process.env.LEAK_SCAN_REPO ??
+  (REAL_MODE ? LAB_PATHS.realRepoPath : LAB_PATHS.serviceDir);
 const SKILL_DIR = join(ROOT, 'data/skills', USER_ID);
 const QUIET = process.argv.includes('--quiet');
 
 /**
- * 测试开关：把这两处指向别处，就能在**副本**上验证闸门的行为，
- * 不必为了跑负对照去动真实库和真实会话目录。
+ * 测试开关：把这几处指向别处，就能在**副本**上验证闸门的行为，
+ * 不必为了跑负对照去动真实库、真实会话目录和真实靶子源码快照。
  * 不设就是真实路径；生产用法永远用默认值。
+ *
+ *   LEAK_SCAN_DB              数据库副本
+ *   LEAK_SCAN_SESSIONS        会话目录副本
+ *   LEAK_SCAN_REPO            源码面（工作树 + git 历史）
+ *   LEAK_SCAN_REAL_TARGET_DIR 真实靶子启动脚本目录（--real 的旋钮面）
  */
 const DB_PATH = process.env.LEAK_SCAN_DB ?? join(ROOT, 'data/db/messages.db');
 const SESSIONS_ROOT =
@@ -301,9 +327,64 @@ const PATTERNS = {
   ],
 };
 
+/**
+ * 真实靶子这一轮的答案词表（分两组，因为两类面的可信度不一样）。
+ *
+ * 这一轮的答案不是「某条缺陷的编号」，而是**运行时配置里的那个旋钮**：
+ * 根因必须落在「健康检查的磁盘空间阈值被调到 50GB（进程环境变量）」这一层，
+ * 并把制品/代码路径排除掉。所以盯的是旋钮名、旋钮取值和阈值措辞。
+ *
+ * 分两组是因为**误报比漏报更坏**：
+ *   - 靶子自己的产物（源码工作树、git 历史）里可能合法地出现「50GB」这类字样；
+ *     更要命的是靶子打包进去的 web 资源里有压缩过的 js，压缩代码里出现
+ *     `R1` 这样的裸 token 是常事——拿裸编号去扫它，闸门会一直红，
+ *     红久了的闸门就没人再看它了。
+ *   - 实验室自己的面（记忆、聊天、会话、Skill、Profile、旋钮文件）里，
+ *     出现裸的故障编号只可能来自实验室，那就是泄漏。
+ */
+const REAL_TARGET_ANSWER_WORDS = [
+  {
+    re: /MANAGEMENT_HEALTH_DISKSPACE_THRESHOLD/i,
+    why: '这一轮故障旋钮的名字——出现即等于把触发源直接交给 Agent',
+  },
+  { re: /\b50\s*GB\b/, why: '这一轮旋钮的取值' },
+  {
+    re: /\b53687091200\b/,
+    why: '阈值换算成字节后的值（actuator health 会报它，但那是证据，不是预置答案）',
+  },
+  { re: /磁盘空间阈值|磁盘阈值|空间阈值/, why: '真值与启动规格里的中文措辞' },
+];
+
+const REAL_LAB_ANSWER_WORDS = [
+  ...REAL_TARGET_ANSWER_WORDS,
+  {
+    re: /\bR[1-9]\b/,
+    why: '这一轮的故障编号——编号本身就是在告诉 Agent 命中的是哪条故障',
+  },
+];
+
+/** 实验室自己的面：靶子产物之外的一切。 */
+const LAB_SURFACES = new Set([
+  'memory',
+  'skill',
+  'profile',
+  'knob',
+  'skillSrc',
+  'profileSrc',
+  'chat',
+  'session',
+]);
+
+function patternsFor(surface) {
+  if (!REAL_MODE) return [...COMMON, ...(PATTERNS[surface] ?? [])];
+  return LAB_SURFACES.has(surface)
+    ? REAL_LAB_ANSWER_WORDS
+    : REAL_TARGET_ANSWER_WORDS;
+}
+
 const hits = [];
 function scan(surface, label, text) {
-  for (const { re, why } of [...COMMON, ...(PATTERNS[surface] ?? [])]) {
+  for (const { re, why } of patternsFor(surface)) {
     const m = re.exec(text);
     if (m) {
       hits.push({
@@ -411,10 +492,28 @@ try {
 }
 
 // ---- 5. 旋钮文件（Agent 用 bash 直接读得到）----
+//
+// 真实这一轮**没有**夹具那种「旋钮文件」：故障旋钮写在启动规格里，
+// 而启动规格是**答案键**（它自己就写着「这一轮的答案键的一半」），
+// 所以它不进这个闸门的面——它由通道审计盯着（读到即污染）。
+// 这一轮真正该干净的是**启动脚本**：旋钮必须由轮次编排在运行时经环境变量注入，
+// 启动脚本里一旦写死了阈值，就等于把触发源烤进了「制品」里。
 const KNOB_FILES = [
   process.env.LAB_ENV ?? join(homedir(), '.config/miniclaw-lab/lab.env'),
   join(ROOT, 'incident/lab.env.example'),
 ];
+if (REAL_MODE) {
+  const targetDir =
+    process.env.LEAK_SCAN_REAL_TARGET_DIR ?? dirname(LAB_PATHS.realLaunchSpec);
+  if (!existsSync(targetDir)) {
+    skipped.push(`真实靶子启动脚本目录（${targetDir} 不存在）`);
+    console.log(`! 真实靶子启动脚本扫描跳过：${targetDir} 不存在`);
+  } else {
+    for (const name of readdirSync(targetDir)) {
+      if (name.endsWith('.sh')) KNOB_FILES.push(join(targetDir, name));
+    }
+  }
+}
 for (const file of KNOB_FILES) {
   if (!existsSync(file)) {
     skipped.push(`旋钮文件（${file} 不存在）`);
@@ -529,18 +628,31 @@ try {
 }
 
 // ---- 报告 ----
-const surfaceName = {
-  service: '服务仓库工作树',
-  history: '服务仓库 git 历史',
-  memory: '工作区记忆',
-  skill: '运行时 Skill',
-  profile: 'Agent Profile',
-  knob: '旋钮文件',
-  skillSrc: 'Skill 源目录',
-  profileSrc: 'Profile 源文件',
-  chat: '聊天历史',
-  session: 'Pi 会话记录',
-};
+const surfaceName = REAL_MODE
+  ? {
+      service: '靶子源码快照工作树',
+      history: '靶子源码 git 历史',
+      memory: '工作区记忆',
+      skill: '运行时 Skill',
+      profile: 'Agent Profile',
+      knob: '旋钮/启动脚本',
+      skillSrc: 'Skill 源目录',
+      profileSrc: 'Profile 源文件',
+      chat: '聊天历史',
+      session: 'Pi 会话记录',
+    }
+  : {
+      service: '服务仓库工作树',
+      history: '服务仓库 git 历史',
+      memory: '工作区记忆',
+      skill: '运行时 Skill',
+      profile: 'Agent Profile',
+      knob: '旋钮文件',
+      skillSrc: 'Skill 源目录',
+      profileSrc: 'Profile 源文件',
+      chat: '聊天历史',
+      session: 'Pi 会话记录',
+    };
 const SURFACE_LIST = Object.values(surfaceName).join(' / ');
 if (hits.length === 0) {
   if (skipped.length) {

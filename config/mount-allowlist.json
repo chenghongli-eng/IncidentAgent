@@ -9,6 +9,11 @@
       "path": "/mnt/my-work/incident-lab/workspace",
       "allowReadWrite": true,
       "description": "Incident-lab workspace — moved out of the repo on 2026-11-04 (see incident/lab-paths.json)"
+    },
+    {
+      "path": "/mnt/my-work/incident-lab/workspace-real",
+      "allowReadWrite": true,
+      "description": "Incident-lab real-target workspace — the real target's source snapshot, kept separate from the synthetic fixture workspace (see incident/lab-paths.json)"
     }
   ],
   "blockedPatterns": [],

@@ -375,6 +375,105 @@ for (const [name, key, matchedOn] of [
 }
 
 // ---------------------------------------------------------------------------
+// A commit that sits on several rows is still one commit
+//
+// The ledger takes a new row every time a deployment is observed again (a
+// running poll, a heartbeat), and the same build can appear in more than one
+// form -- the image it produced and the artifact unpacked from that image.
+// Counting rows made all of those look like "several different commits", and
+// the read side then answered "the ledger has no such commit" for a commit
+// that was in the ledger. That is a false claim about absence, and it is the
+// worst thing this channel can say.
+//
+// The near-identical negative keeps the rows but gives them two different
+// commits: then a prefix really is ambiguous, and the read side must say so
+// -- without claiming the commit is absent.
+// ---------------------------------------------------------------------------
+
+{
+  // The same deployment, observed three times.
+  const observed = join(dir, 'ledger-commit-observed.jsonl');
+  writeFileSync(
+    observed,
+    jsonl(
+      { ...entryNew, collected_at: nowIso },
+      {
+        ...entryNew,
+        running_observed_at: nowIso,
+        collected_at: nowIso,
+      },
+      { ...entryNew, collected_at: nowIso },
+    ),
+  );
+  const r = run(['deploy', 'lookup', COMMIT_NEW], {
+    DEPLOY_LEDGER: observed,
+  });
+  const parsed = parseOut(r);
+  check(
+    'a commit observed several times is still found',
+    r.code === 0 &&
+      parsed?.matched_on === 'commit' &&
+      parsed?.entry?.commit === COMMIT_NEW,
+    `exit=${r.code} matched_on=${parsed?.matched_on}`,
+  );
+}
+
+{
+  // One commit, two deployment forms (image and unpacked artifact).
+  const twoForms = join(dir, 'ledger-commit-two-forms.jsonl');
+  writeFileSync(
+    twoForms,
+    jsonl(entryNew, {
+      ...entryNew,
+      digest: `sha256:${hex('5a')}`,
+      image_ref: '/srv/artifacts/9001',
+      commit_source: 'jenkins-build',
+    }),
+  );
+  const r = run(['deploy', 'lookup', COMMIT_NEW], {
+    DEPLOY_LEDGER: twoForms,
+  });
+  const parsed = parseOut(r);
+  check(
+    'a commit deployed in two forms is found, and both forms are disclosed',
+    r.code === 0 &&
+      parsed?.entry?.commit === COMMIT_NEW &&
+      Array.isArray(parsed?.matched_deployments) &&
+      parsed.matched_deployments.length === 2,
+    `exit=${r.code} deployments=${parsed?.matched_deployments?.length}`,
+  );
+}
+
+{
+  // The near-identical negative: one prefix, two different commits. This one
+  // really is ambiguous -- and the message must not claim absence.
+  const AMBIGUOUS_COMMIT = 'abababa';
+  const ambiguousCommit = join(dir, 'ledger-ambiguous-commit.jsonl');
+  writeFileSync(
+    ambiguousCommit,
+    jsonl(
+      { ...entryNew, commit: `${AMBIGUOUS_COMMIT}${hex('11', 33)}` },
+      {
+        ...entryNew,
+        commit: `${AMBIGUOUS_COMMIT}${hex('22', 33)}`,
+        digest: `sha256:${hex('6b')}`,
+        image_ref: 'registry.example/orders:103',
+      },
+    ),
+  );
+  const r = run(['deploy', 'lookup', AMBIGUOUS_COMMIT], {
+    DEPLOY_LEDGER: ambiguousCommit,
+  });
+  const saidAmbiguous = r.err.includes('歧义');
+  const saidMissing = r.err.includes('台账缺条目');
+  check(
+    'a commit prefix matching two commits is called ambiguous, not absent',
+    r.code !== 0 && saidAmbiguous && !saidMissing && r.out.trim() === '',
+    `exit=${r.code} ambiguous=${saidAmbiguous} missing=${saidMissing}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // A commit read out of the CI build record is a fact, not an inference
 //
 // The image says nothing about its own commit, so the ledger takes it from the

@@ -215,8 +215,13 @@ export function checkIsolation({ workspaceRoot, repoRoot, identity }) {
   return violations;
 }
 
-function loadIdentity() {
-  const p = join(here, '../agent-profile/identity.json');
+function loadIdentity(real = false) {
+  const p = join(
+    here,
+    real
+      ? '../agent-profile/identity-real.json'
+      : '../agent-profile/identity.json',
+  );
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
@@ -224,13 +229,18 @@ function main() {
   const paths = JSON.parse(
     readFileSync(join(here, '../lab-paths.json'), 'utf8'),
   );
+  // 真实靶子那一轮换的是**另一套工作区与另一份提示词**：
+  // 工作区是靶子源码快照（不是合成夹具），提示词是 identity-real.json。
+  // 不换的话，这条闸门量的是合成夹具那一套，对真实轮次什么也没说。
+  const real = process.argv.includes('--real');
+  const workspaceRoot = real ? paths.realWorkspaceRoot : paths.workspaceRoot;
   const violations = checkIsolation({
-    workspaceRoot: paths.workspaceRoot,
+    workspaceRoot,
     repoRoot: paths.repoRoot,
-    identity: loadIdentity(),
+    identity: loadIdentity(real),
   });
   console.log(
-    `闸门 W：工作区 ${paths.workspaceRoot}\n` +
+    `闸门 W${real ? '（真实靶子）' : ''}：工作区 ${workspaceRoot}\n` +
       `        仓库根 ${paths.repoRoot}\n`,
   );
   if (violations.length) {
@@ -239,7 +249,9 @@ function main() {
     process.exit(1);
   }
   console.log('✓ W1 工作区根往上 2 层没有答案键文件');
-  console.log('✓ W2 identity.json 四段提示词不含仓库根路径 / 旋钮目录');
+  console.log(
+    `✓ W2 ${real ? 'identity-real.json' : 'identity.json'} 四段提示词不含仓库根路径 / 旋钮目录`,
+  );
   console.log('✓ W3 仓库内旧工作区路径已清空，仓库根不在工作区祖先链上');
   console.log(
     '✓ W4 工作区往上 2 层没有实验室记录（bundle / injections.log / 归档目录）',

@@ -6,5 +6,15 @@
   "logsDir": "/mnt/my-work/incident-lab/workspace/logs",
   "archiveDir": "/home/fs-user/incident-lab-archive",
   "fixtureLedger": "/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/lab-ledger.jsonl",
-  "repoRoot": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main"
+  "repoRoot": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main",
+
+  "$comment_real": "真实靶子那一轮的路径。合成夹具与真实靶子**各有一套工作区**：两个工作区不能混——夹具工作区里是合成源码，真实工作区里是靶子仓库的快照，混在一起 Agent 就分不清「被诊断的是谁」。真实工作区放在夹具工作区的旁边（同级目录），两者都不在仓库里。真值与轮次产物放在 archiveDir 下、但**不在** logs 目录的邻域里：真值是答案键，Agent 的日志目录就在 archiveDir 下面，两者挨着等于把答案摆在证据面边上。",
+  "realWorkspaceRoot": "/mnt/my-work/incident-lab/workspace-real",
+  "realReadonlyCli": "/mnt/my-work/incident-lab/workspace-real/tools/incident-readonly.mjs",
+  "realRepoPath": "/mnt/my-work/incident-lab/workspace-real/repo",
+  "realLedger": "/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/ledger.jsonl",
+  "realTruthDir": "/home/fs-user/incident-lab-archive/real-ground-truth",
+  "realRoundsDir": "/home/fs-user/incident-lab-archive/lab-data/rounds",
+  "realLaunchSpec": "/home/fs-user/incident-lab-archive/lab-data/targets/p2/launch-spec.json",
+  "realGroupJid": "web:b2cdce7e-ca92-4b3d-8ee8-b896f941b19a"
 }

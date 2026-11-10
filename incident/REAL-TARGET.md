@@ -181,6 +181,37 @@ P2 的 `java -jar` 实例（`127.0.0.1:12306`，只绑回环、把所有 cron �
 
 细节在 `incident/DEPLOY-LEDGER.md` §16。
 
+#### 第二行台账：CI 构建出来的那份产物（2026-11-10 实测，A2）
+
+A2 要的不是「本地构建的那份产物」，而是 **CI 构建出来的那份部署单元**
+（瘦 jar + `lib/` 目录，276 个文件）。理由在 `DEPLOY-LEDGER.md` §16：
+本地工作区里可能有未提交改动，本地 git 推断出来的 commit 只是一个**线索**；
+只有 CI 那份产物才配得上 `commit_source='jenkins-build'`（权威等级与
+OCI label 同级）。把那个 commit 挂到本地构建的胖 jar 上是**错的**。
+
+实测做法：按仓库外的启动规格跑 CI 制品（启动目录在部署单元**之外**，
+这样运行时的日志不会写进部署单元、tree hash 不会漂），
+再用 `collector/host-target.mjs --commit <CI 构建记录的 commit>
+--commit-source jenkins-build` 采一行。台账里多出来的这一行：
+
+| 字段                  | 说明                                                      |
+| --------------------- | --------------------------------------------------------- |
+| `digest`              | 部署单元的 **tree hash**（值留仓库外）                    |
+| `evidence`            | `host-artifact-tree-sha256` + `proc-start-time`           |
+| `commit`              | CI 构建记录里的 commit（**值留仓库外**）                  |
+| `commit_source`       | **`jenkins-build`**（不是 `git-window`，也不是 `manual`） |
+| `pod_started_at`      | 实测的进程启动时刻                                        |
+| `running_observed_at` | 实测的观测时刻                                            |
+
+**这一行解决的是什么**：真实项目镜像的 Dockerfile 里 **0 条 LABEL**，
+所以「镜像自述 commit」这条最硬的凭据还没有；在它落地之前，
+`jenkins-build` 是**次硬但真实存在**的一条。归因时能说
+「这次运行的是哪一次 CI 构建」，而不是「本地 HEAD 推的」。
+
+**它没有解决什么**：它不改变「真实靶子的 commit 只能到 `jenkins-build`
+这一档」这个结论（B1 仍未解除）。`commit_reliable` 对这一档是 `true`，
+但档位本身仍然是「CI 构建记录」，不是「产物自述」。
+
 ## 真正需要先解决的是合规，不是 Jira
 
 这里有一件必须先想清楚的事，比技术方案重要：

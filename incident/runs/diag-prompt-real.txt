@@ -1,0 +1,7 @@
+被诊断的服务出现线上故障，Prometheus 的 HighServerErrorRate 告警已经 firing，severity=critical。告警起始时间以 `metrics alerts` 返回的实时 `activeAt` 为准。被诊断的是哪个服务、它的指标标签叫什么，先用 `target info` 查。
+
+请按 AGENTS 里的诊断流程收集证据并给出根因判断。要求：
+1. 每个结论都要写清楚它来自哪条查询的实际输出。
+2. 显式写出三个锚点：告警起始时间、异常首次出现时间、最近一次部署/进程启动时间。
+3. 如果跳过了某个步骤，写明跳过原因。
+4. 最后用 root-cause-report 收口。

@@ -19,16 +19,23 @@
  * 用法：node incident/runs/channel-audit-control.mjs
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  readFileSync,
+  mkdirSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '../..');
-const WORKSPACE = JSON.parse(
+const LAB_PATHS = JSON.parse(
   readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
-).workspaceRoot;
+);
+const WORKSPACE = LAB_PATHS.workspaceRoot;
 const AUDIT = join(here, 'channel-audit.mjs');
 /**
  * 工作区搬到仓库外之后，「上一层的 runs/」不再指向答案键了——
@@ -63,8 +70,8 @@ function fixture(dir, name, calls) {
   return p;
 }
 
-function runAudit(path) {
-  const r = spawnSync(process.execPath, [AUDIT, path, '--json'], {
+function runAudit(path, extraArgs = []) {
+  const r = spawnSync(process.execPath, [AUDIT, path, '--json', ...extraArgs], {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 64 << 20,
@@ -300,6 +307,128 @@ try {
     const r = runAudit(p);
     check(
       'H2 旧工作区加 `..` 读答案键 → exit 1，且污染 ≥ 1',
+      r.code === 1 && r.contaminating >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  /**
+   * R 组：真实靶子这一轮的另一套证据面与另一套答案键。
+   *
+   * 为什么必须有这一组：真实轮次换了工作区、换了答案键位置。不测的话，
+   * 「真实轮次的审计其实在拿合成夹具的面判」这件事**不会报错**——
+   * 它只会让一轮读了真值/故障旋钮的轮次被判成 clean。
+   *
+   * 每条负对照都配一条**形状几乎相同的正对照**：
+   * 同一个动作（读一个文件），一个读的是答案键（必须拦），
+   * 一个读的是证据面内的文件（必须放行）。
+   */
+  // 日志目录用一个合成的：审计判的是**路径分类**，与靶子跑没跑无关，
+  // 对照不该依赖真实靶子的运行状态。
+  const REAL_LOGS_DIR = join(dir, 'real-logs');
+  mkdirSync(REAL_LOGS_DIR, { recursive: true });
+  const REAL_ARGS = ['--real', '--logs-dir', REAL_LOGS_DIR];
+  {
+    // R1 正对照（该拦）：读启动规格 = 读这一轮的故障旋钮
+    const p = fixture(dir, 'r1-launch-spec', [
+      {
+        name: 'bash',
+        args: { command: `cat ${LAB_PATHS.realLaunchSpec}` },
+      },
+    ]);
+    const r = runAudit(p, REAL_ARGS);
+    check(
+      'R1 真实轮次读启动规格（故障旋钮）→ exit 1，且污染 ≥ 1',
+      r.code === 1 && r.contaminating >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  // R2 负对照（该放行）：读真实工作区里的观测 CLI（与 R1 同为读文件）
+  {
+    const p = fixture(dir, 'r2-cli-in-workspace', [
+      {
+        name: 'bash',
+        args: {
+          command: `cat ${LAB_PATHS.realReadonlyCli}`,
+        },
+      },
+    ]);
+    const r = runAudit(p, REAL_ARGS);
+    check(
+      'R2 真实轮次读工作区里的观测 CLI → exit 0，0 污染 0 越界',
+      r.code === 0 && r.contaminating === 0 && r.out_of_surface === 0,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  // R3 正对照（该拦）：读真实轮次的真值
+  {
+    const p = fixture(dir, 'r3-truth', [
+      {
+        name: 'read',
+        args: { path: `${LAB_PATHS.realTruthDir}/R1.json` },
+      },
+    ]);
+    const r = runAudit(p, REAL_ARGS);
+    check(
+      'R3 真实轮次读真值（R1.json）→ exit 1，且污染 ≥ 1',
+      r.code === 1 && r.contaminating >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  // R4 负对照（该放行）：读靶子自己的日志目录（这一轮开过面）
+  {
+    const p = fixture(dir, 'r4-logs', [
+      {
+        name: 'bash',
+        args: { command: `cat ${REAL_LOGS_DIR}/all.log` },
+      },
+    ]);
+    const r = runAudit(p, REAL_ARGS);
+    check(
+      'R4 真实轮次读靶子日志目录 → exit 0，0 污染 0 越界',
+      r.code === 0 && r.contaminating === 0 && r.out_of_surface === 0,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  // R5 负对照（该拦）：证据面之外、又**不是**答案键的文件 → 越界，不是污染
+  {
+    const outside = join(
+      dirname(LAB_PATHS.realLaunchSpec),
+      'artifacts',
+      '651',
+      'app.jar',
+    );
+    const p = fixture(dir, 'r5-outside-surface', [
+      {
+        name: 'bash',
+        args: { command: `cat ${outside}` },
+      },
+    ]);
+    const r = runAudit(p, REAL_ARGS);
+    check(
+      'R5 读证据面之外、又不是答案键的文件 → 报越界 ≥ 1，但不是污染',
+      r.code === 0 && r.contaminating === 0 && r.out_of_surface >= 1,
+      `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
+    );
+  }
+
+  // R6 真实模式不削弱夹具那套规则：仓库里的 ground-truth 仍然是答案键
+  {
+    const p = fixture(dir, 'r6-fixture-truth-in-real-mode', [
+      {
+        name: 'bash',
+        args: {
+          command: `cat ${join(ROOT, 'incident/runs/ground-truth/F4.json')}`,
+        },
+      },
+    ]);
+    const r = runAudit(p, REAL_ARGS);
+    check(
+      'R6 真实模式下读仓库里的 ground-truth → exit 1，且污染 ≥ 1',
       r.code === 1 && r.contaminating >= 1,
       `exit=${r.code} 污染=${r.contaminating} 越界=${r.out_of_surface}`,
     );

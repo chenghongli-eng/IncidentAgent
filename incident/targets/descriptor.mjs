@@ -124,6 +124,13 @@ export function targetProfile(descriptor, env = process.env) {
       d.appStartedPattern ?? FIXTURE_DEFAULTS.appStartedPattern,
     logFiles: d.logFiles ?? [],
     ledgerPath: env.DEPLOY_LEDGER ?? d.ledgerPath ?? null,
+    /**
+     * 启动规格（宿主机形态靶子用）。
+     *
+     * 规格在仓库外——它是这一轮的答案键的一部分（故障旋钮写在里面）。
+     * 这里只把路径带出来，读不读由轮次编排决定。
+     */
+    launchSpec: d.launchSpec ?? null,
     startedAt: d.startedAt ?? null,
     descriptorFile: descriptor?.__file ?? null,
   };

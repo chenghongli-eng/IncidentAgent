@@ -44,6 +44,7 @@ import {
   parseBtimeSeconds,
   processStartMs,
   hostObservation,
+  unitWriteHandles,
 } from './host-target.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -535,6 +536,155 @@ writeFileSync(join(unitDir, 'lib', 'dep-b.jar'), 'dependency b v1\n');
       obs.image_ref === unitDir &&
       obs.evidence === 'host-artifact-tree-sha256',
     `kind=${obs.artifact_kind} image_ref=${obs.image_ref}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A deployment unit must be immutable to be a key
+// ---------------------------------------------------------------------------
+
+// The key of a unit is the tree hash over everything inside it. A running
+// process that writes into the unit moves that key: the same deployment
+// hashes differently before and after a log line, and the read side -- which
+// looks deployments up by digest -- then fails to find the row it just wrote.
+//
+// The real target hits exactly this: its logback config writes `./logs`,
+// relative to the working directory, so starting the app from inside the unit
+// makes the process write into the very directory it is identified by.
+//
+// These controls use a unit of their own: the shared unit above has had its
+// timestamps pushed into the future by an earlier case, which would trip the
+// "newer than the process start" half of the guard for unrelated reasons.
+
+function makeUnit(name) {
+  const d = join(dir, name);
+  mkdirSync(join(d, 'lib'), { recursive: true });
+  writeFileSync(join(d, 'app.jar'), 'unit jar v1\n');
+  writeFileSync(join(d, 'lib', 'dep.jar'), 'unit dep v1\n');
+  return d;
+}
+
+// A child process that holds one file open in the given mode and keeps it
+// open. The write handle is what makes the unit mutable.
+function spawnHolder(file, mode) {
+  const p = spawn(
+    process.execPath,
+    [
+      '-e',
+      `require('fs').openSync(process.argv[1], '${mode}'); setInterval(() => {}, 1000);`,
+      file,
+    ],
+    { stdio: 'ignore' },
+  );
+  return p;
+}
+
+function waitFor(predicate, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  return false;
+}
+
+{
+  // Negative control: the process is writing into the unit right now.
+  const unit = makeUnit('unit-live-writer');
+  const target = join(unit, 'logs', 'app.log');
+  mkdirSync(join(unit, 'logs'), { recursive: true });
+  writeFileSync(target, 'first line\n');
+  const holder = spawnHolder(target, 'a');
+  try {
+    const seen = waitFor(() => unitWriteHandles(holder.pid, unit).length > 0);
+    check(
+      'the write handle inside the unit is visible',
+      seen,
+      `handles=${JSON.stringify(unitWriteHandles(holder.pid, unit))}`,
+    );
+    expectHardError(
+      'a unit the running process is writing into is refused as a key',
+      () => hostObservation({ artifactDir: unit, pid: holder.pid }),
+      '正在被进程',
+    );
+  } finally {
+    holder.kill('SIGKILL');
+  }
+}
+
+{
+  // The near-identical positive: same unit, same child, but the file is held
+  // **read-only**. A module that refuses every unit would fail this one, so
+  // the pair shows the guard reacts to writing and not to "a pid exists".
+  const unit = makeUnit('unit-read-only-holder');
+  const target = join(unit, 'app.jar');
+  const holder = spawnHolder(target, 'r');
+  try {
+    const seen = waitFor(() => unitWriteHandles(holder.pid, unit).length === 0);
+    check(
+      'a read-only handle inside the unit is not a write handle',
+      seen,
+      'handles=0',
+    );
+    let obs = null;
+    let threw = null;
+    try {
+      obs = hostObservation({ artifactDir: unit, pid: holder.pid });
+    } catch (err) {
+      threw = err;
+    }
+    check(
+      'a unit only read from is still a valid key',
+      threw === null &&
+        obs.digest === `sha256:${treeSha256(unit)}` &&
+        obs.running_source === 'host',
+      threw
+        ? `threw: ${threw.message.slice(0, 60)}`
+        : `digest=${obs?.digest.slice(0, 20)}`,
+    );
+  } finally {
+    holder.kill('SIGKILL');
+  }
+}
+
+{
+  // Runtime output left over from an earlier run: the handle is closed, but
+  // the file is newer than the process start, so it is not part of the
+  // artifact that was shipped.
+  const unit = makeUnit('unit-stale-output');
+  mkdirSync(join(unit, 'logs'), { recursive: true });
+  const holder = spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000)'],
+    {
+      stdio: 'ignore',
+    },
+  );
+  try {
+    // Wait past the start-time uncertainty before writing, so this case
+    // exercises the "runtime output" rule and not the clock's tolerance.
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    writeFileSync(join(unit, 'logs', 'app.log'), 'left over from a run\n');
+    expectHardError(
+      'runtime output left inside the unit is refused as a key',
+      () => hostObservation({ artifactDir: unit, pid: holder.pid }),
+      '比进程启动时刻还新',
+    );
+  } finally {
+    holder.kill('SIGKILL');
+  }
+}
+
+{
+  // No pid means nobody to blame: the unit is taken at face value. The
+  // collector cannot know who writes into it, and refusing everything would
+  // make the unit unusable.
+  const unit = makeUnit('unit-no-pid');
+  const obs = hostObservation({ artifactDir: unit, pid: null });
+  check(
+    'a unit with no pid is still observed',
+    obs.digest === `sha256:${treeSha256(unit)}`,
+    `digest=${obs.digest.slice(0, 20)}`,
   );
 }
 
