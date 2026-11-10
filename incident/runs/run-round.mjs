@@ -46,6 +46,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -569,6 +570,25 @@ async function readRatio() {
   );
   const v = r.data?.result?.[0]?.value?.[1];
   return v === undefined ? 0 : Number(v);
+}
+
+/**
+ * 等靶子自己的指标在 Prometheus 里出现（P3 的条件）。
+ *
+ * 重启后进程的指标是从零重新累计的，Prometheus 要等到下一轮抓取才看得见。
+ * 所以这里的「等不到」有两种含义：抓取还没到（正常的秒级延迟），
+ * 或者靶子根本没起来（异常）。120 秒足够区分——合成抓取周期是秒级。
+ */
+async function waitForSeries(timeoutMs = 120000) {
+  const q = `sum(http_server_requests_seconds_count{application="${APP_LABEL}"})`;
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    const r = await json(`${PROM}/api/v1/query?query=${encodeURIComponent(q)}`);
+    const v = r.data?.result?.[0]?.value?.[1];
+    if (v !== undefined && Number(v) > 0) return true;
+    await sleep(2000);
+  }
+  return false;
 }
 
 async function waitHealthyBaseline(timeoutMs = 120000) {
@@ -1360,28 +1380,69 @@ function baselineEnv() {
 }
 
 /**
+ * 把上一轮留下的日志挪出 Agent 的证据面。
+ *
+ * 为什么非做不可：真实靶子的日志目录是**跨轮累积**的。第二轮 Agent 能读到第一轮
+ * 注入时打的那几行 `DiskSpaceHealthIndicator ... threshold: 53687091200`，
+ * 第三轮还能读到前两轮——阈值这个答案就直接躺在日志里。
+ *
+ * 这**不是**通道越界：日志目录本来就是合法证据面，channel-audit 按定义放行它，
+ * 所以审计会说 clean。真正被破坏的是**样本独立性**：后几轮的命中是被前一轮
+ * 提示过的命中，命中率不能当独立样本的命中率看。
+ *
+ * 归档而不是删除：完整历史留着可追溯，只是不在这一轮的证据面里。
+ * 必须在**停掉进程之后**调用——进程持着旧句柄，只挪文件的话它会继续写进
+ * 已改名的 inode，新一轮看不到那些内容，归档件却还在长。
+ */
+function archiveRealLogs(stamp) {
+  const runDir = LAUNCH_SPEC.runDir ?? dirname(LAUNCH_SPEC.launcher);
+  const logsDir = join(runDir, 'logs');
+  const moves = [];
+  if (existsSync(logsDir)) {
+    for (const f of readdirSync(logsDir)) {
+      if (f.endsWith('.log')) {
+        moves.push({ src: join(logsDir, f), rel: join('logs', f) });
+      }
+    }
+  }
+  const launchLog = join(runDir, 'launch.log');
+  if (existsSync(launchLog)) moves.push({ src: launchLog, rel: 'launch.log' });
+  if (moves.length === 0) return { archived: 0, dest: null };
+  const dest = join(runDir, 'logs-archive', stamp);
+  mkdirSync(dest, { recursive: true });
+  for (const m of moves) {
+    const target = join(dest, m.rel);
+    mkdirSync(dirname(target), { recursive: true });
+    renameSync(m.src, target);
+  }
+  return { archived: moves.length, dest };
+}
+
+/**
  * 把靶子拉回**基线态**（不带故障旋钮），并把这次观测记进台账。
  *
- * 三件事按顺序：
- *   1. 端口上已经在跑而且健康 → 不重启。多一次重启就多一条「刚刚发过版」
- *      的观测，而这一轮要测的恰恰是 Agent 会不会被那种观测带跑。
- *   2. 端口上跑着但**不健康**（多半是上一轮留下的故障态）→ 先停掉它。
- *      停法只有一种：找到监听进程，只对它发信号。
+ * 顺序：
+ *   1. 端口上有进程就停掉（健康也停）。停法只有一种：找到监听进程，只对它发信号。
+ *      健康的进程以前是**沿用**的，理由是不想多一条「刚刚发过版」的观测。
+ *      但沿用意味着日志接着上一轮往下写——见 archiveRealLogs 的注释。
+ *      两害相权：多一条基线重启的观测是**可见的**（台账里写着），
+ *      前一轮的注入痕迹留在证据面里是**不可见的**。选前者。
+ *   2. 把上一轮的日志归档出去。
  *   3. 拉起来，等它真的健康（200），再记观测。
  */
 async function ensureRealBaseline() {
   const pid = listenPid(LAUNCH_SPEC.port);
   if (pid !== null) {
-    const status = await healthStatus(LAUNCH_SPEC);
-    if (status === 200) {
-      recordRealDeployment('baseline');
-      return { restarted: false, pid, status };
-    }
-    log(`  端口上的靶子不健康（${status}），先停掉它`);
     const stopped = await stopTarget(LAUNCH_SPEC);
     if (!stopped.stopped) {
       fail(`停不掉现有的靶子进程：${stopped.why}`);
     }
+  }
+  const logArchive = archiveRealLogs(STAMP);
+  if (logArchive.archived > 0) {
+    log(
+      `  上一轮日志已归档：${logArchive.archived} 个文件 → ${logArchive.dest}`,
+    );
   }
   startTarget(LAUNCH_SPEC, { env: baselineEnv() });
   const ready = await waitReady(LAUNCH_SPEC, {
@@ -1394,7 +1455,12 @@ async function ensureRealBaseline() {
     );
   }
   recordRealDeployment('baseline');
-  return { restarted: true, pid: listenPid(LAUNCH_SPEC.port), status: 200 };
+  return {
+    restarted: true,
+    pid: listenPid(LAUNCH_SPEC.port),
+    status: 200,
+    log_archive: logArchive,
+  };
 }
 
 /**
@@ -1522,6 +1588,15 @@ async function main() {
         baseline: await ensureRealBaseline(),
       };
       ensureHealthProbe();
+      // 基线现在每轮都重启（为了把上一轮日志挪出证据面），而刚起来的进程在
+      // Prometheus 里还没有序列——不在这里等，P3「靶子在自己的指标里现身」会
+      // 因为「还没来得及被抓到」判死，整轮在闸门处中止。
+      if (!(await waitForSeries())) {
+        fail(
+          '基线重启后 120 秒内，靶子的指标没在 Prometheus 里出现——' +
+            '活性信号拿不到，这一轮不开跑（不能把「没抓到」当成「靶子活着」）。',
+        );
+      }
     }
     const { gates, facts } = await realTargetPreflight(PROFILE, realDeps);
     manifest.target = { ...manifest.target, facts };
