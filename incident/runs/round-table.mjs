@@ -188,6 +188,18 @@ for (const f of manifests) {
           .map((q) => `${q.id}${q.result === 'PASS' ? '✓' : '✗'}`)
           .join(' ')
       : null,
+    quality_detail: score?.quality
+      ? score.quality.map((q) => ({ id: q.id, result: q.result }))
+      : null,
+    tool_calls: m.channel_audit?.tool_calls ?? null,
+    agent_seconds:
+      m.agent?.started_at && m.agent?.finished_at
+        ? Math.round(
+            (Date.parse(m.agent.finished_at) - Date.parse(m.agent.started_at)) /
+              1000,
+          )
+        : null,
+    report_chars: m.agent?.chars ?? null,
     needs_review: score?.needs_review?.length ?? null,
   });
 }
@@ -219,6 +231,64 @@ for (const r of rows) {
       `${r.accuracy === null ? '—' : r.accuracy.toFixed(1)} | ${dep} | ${r.quality ?? '—'} | ` +
       `${r.rubric_version ?? '—'} | \`${r.manifest}\` |`,
   );
+}
+
+/**
+ * 汇总：评测要的是分布，不是一轮的成绩。
+ *
+ * 单轮的一次 hit 说明不了 Agent 稳不稳——它可能是抽到了好样本。
+ * 所以这里按**有效轮**（跑完了 Agent、审计干净、manifest 没作废）算：
+ * 命中率、发布归因正确率、每条质量判据的通过率。
+ *
+ * 无效轮不计入分母，也不从分母里悄悄消失：无效轮数单独列出来。
+ */
+const scored = rows.filter((r) => r.valid && r.accuracy !== null);
+const invalid = rows.filter((r) => !r.valid);
+if (scored.length > 0) {
+  const n = scored.length;
+  const pct = (x) => `${x}/${n}（${((x / n) * 100).toFixed(0)}%）`;
+  const tiers = { hit: 0, partial: 0, miss: 0 };
+  for (const r of scored) if (r.tier in tiers) tiers[r.tier] += 1;
+  const attrCorrect = scored.filter(
+    (r) => r.deployment_correct === 'correct',
+  ).length;
+  const auditClean = scored.filter((r) => r.audit === 'clean').length;
+  const critIds = [
+    ...new Set(scored.flatMap((r) => r.quality_detail ?? []).map((q) => q.id)),
+  ];
+  const durations = scored
+    .map((r) => r.agent_seconds)
+    .filter((s) => typeof s === 'number')
+    .sort((a, b) => a - b);
+
+  console.log('\n### 汇总（只算有效轮）\n');
+  console.log(`| 指标 | 值 |`);
+  console.log(`| --- | --- |`);
+  console.log(`| 有效轮数（分母） | ${n} |`);
+  console.log(`| 无效轮数（不计入分母） | ${invalid.length} |`);
+  console.log(`| 根因命中（hit） | ${pct(tiers.hit)} |`);
+  console.log(`| 根因部分命中（partial） | ${pct(tiers.partial)} |`);
+  console.log(`| 根因未命中（miss） | ${pct(tiers.miss)} |`);
+  console.log(`| 发布归因正确 | ${pct(attrCorrect)} |`);
+  console.log(`| 通道审计干净 | ${pct(auditClean)} |`);
+  if (durations.length) {
+    const sum = durations.reduce((a, b) => a + b, 0);
+    console.log(
+      `| Agent 用时（秒） | 最短 ${durations[0]}｜中位 ${durations[Math.floor(durations.length / 2)]}｜最长 ${durations[durations.length - 1]}｜均值 ${Math.round(sum / durations.length)} |`,
+    );
+  }
+  if (critIds.length) {
+    console.log(`\n| 质量判据 | 通过 |`);
+    console.log(`| --- | --- |`);
+    for (const id of critIds) {
+      const pass = scored.filter((r) =>
+        (r.quality_detail ?? []).some(
+          (q) => q.id === id && q.result === 'PASS',
+        ),
+      ).length;
+      console.log(`| ${id} | ${pct(pass)} |`);
+    }
+  }
 }
 
 console.log('\n### 每轮的注入与告警锚点（人工复核用）\n');
