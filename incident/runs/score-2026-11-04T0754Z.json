@@ -1,7 +1,7 @@
 {
-  "report": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/agent-report-2026-11-04T0754Z.md",
-  "ground_truth": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/ground-truth/F4.json",
-  "rubric_version": "v6",
+  "report": "agent-report-2026-11-04T0754Z.md",
+  "ground_truth": "ground-truth/F4.json",
+  "rubric_version": "v7",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -73,8 +73,15 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…【反对证据 / 尚未解释】 - 本次运行有 15 行 \"order N loaded for use…"
+      "evidence": "…iles/{id} 成功请求；该差异不影响归因。 - 告警规则的 for 值无法读取，真实 firing 时刻未知，只能确定 pending 起始。…"
     }
   ],
-  "needs_review": []
+  "needs_review": [],
+  "rescored_from": {
+    "rubric_version": "v6",
+    "root_cause_accuracy": 0,
+    "accuracy_tier": "miss",
+    "deployment_attribution": "unclear",
+    "deployment_attribution_correct": "unclear"
+  }
 }

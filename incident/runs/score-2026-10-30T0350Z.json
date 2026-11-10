@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0350Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…## 【根因假设】 **置信度：0.95** **机制**：容器重建时随环境注入的 `DOWNSTREAM_TIMEOUT_MS=1`（1 毫秒）把 `RestTemplate` 的 connect/read timeout 压到 1ms，导致 `OrderService.loadOrder` 内部发往…"
+      "evidence": "…**置信度：0.95** **机制**：容器重建时随环境注入的 `DOWNSTREAM_TIMEOUT_MS=1`（1 毫秒）把 `RestTemplate` 的 connect/read timeout 压到 1ms，导致 `OrderService.loadOrder` 内部发往…"
     },
     {
       "id": "F4-C2",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…## 【反对证据 / 尚未解释】 1. **下游服务本身完全正常，与\"故障在下游\"不矛盾但需说明**：本次故…"
+      "evidence": "…验证\"把超时调回 2000ms 即可恢复\"** —— 本 Agent 无写权限，无法做因果验证实验。该动作列为处置建议草案。…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

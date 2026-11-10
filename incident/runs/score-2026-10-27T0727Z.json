@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-27T0727Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…### 【根因假设】 **置信度：0.92** **机制**：运行时旋钮 `DOWNSTREAM_TIMEOUT_MS` 被改到 **1 毫秒**（旋钮文件最后修改 07:24:20.061Z，容器 07:24:21Z 重建加载），…"
+      "evidence": "…**置信度：0.92** **机制**：运行时旋钮 `DOWNSTREAM_TIMEOUT_MS` 被改到 **1 毫秒**（旋钮文件最后修改 07:24:20.061Z，容器 07:24:21Z 重建加载），…"
     },
     {
       "id": "F4-C2",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…### 【反对证据 / 尚未解释】 1. **日志里没有完整堆栈**（`logs grep 'at java.b…"
+      "evidence": "…，`at com.example.target` 也无匹配），NPE 栈顶行**未能直接取证**；栈顶由 NPE 消息 + 源码 + diff 三方推定，不是抓到的…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

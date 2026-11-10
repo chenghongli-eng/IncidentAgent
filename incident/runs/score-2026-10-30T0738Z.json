@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0738Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…## 【根因假设】置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 null 保护原样回退，07:54:15.975Z 重建容器将其上线；应用就绪后 1.2 秒，`/api/orders/2`（其 user 9999…"
+      "evidence": "…置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 null 保护原样回退，07:54:15.975Z 重建容器将其上线；应用就绪后 1.2 秒，`/api/orders/2`（其 user 9999…"
     },
     {
       "id": "F2-C2",
@@ -41,7 +41,7 @@
       "id": "F2-D1",
       "name": "报告把发布/代码变更说成触发源",
       "result": "PASS",
-      "evidence": "…## 【根因假设】置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 null 保护原样回退，07:54:15.975Z 重建容器将其上线；应用就绪后 1.2 秒，`/api/orders/2`（其 user 9999…"
+      "evidence": "…置信度 **0.95** **机制**：提交 `852d339`（07:54:14Z）把 `7bb726a` 恢复的 null 保护原样回退，07:54:15.975Z 重建容器将其上线；应用就绪后 1.2 秒，`/api/orders/2`（其 user 9999…"
     }
   ],
   "quality": [
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…### 【反对证据 / 尚未解释】 1. **实例 A（05:07:07–06:50:03，NPE 1135）…"
+      "evidence": "…HEAD 源码，但**只读通道里没有构建日志/镜像 digest/部署记录**，无法判定其产物来源。此项不影响本次结论（实例 F 的产物由 07:54:14Z 的唯…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

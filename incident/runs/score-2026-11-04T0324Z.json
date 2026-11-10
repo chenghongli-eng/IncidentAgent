@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-04T0324Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…【根因假设】 置信度：0.90 机制：运行时把下游读超时压到 1 ms（knob 文件 03:41:37.614 改、03:41:38.052 容器重建生效），…"
+      "evidence": "…置信度：0.90 机制：运行时把下游读超时压到 1 ms（knob 文件 03:41:37.614 改、03:41:38.052 容器重建生效），…"
     },
     {
       "id": "F4-C2",
@@ -27,7 +27,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…【根因假设】 置信度：0.90 机制：运行时把下游读超时压到 1 ms（knob 文件 03:41:37.614 改、03:41:38.…"
+      "evidence": "…置信度：0.90 机制：运行时把下游读超时压到 1 ms（knob 文件 03:41:37.614 改、03:41:38.…"
     }
   ],
   "deployment_checks": [
@@ -71,15 +71,15 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…【反对证据 / 尚未解释】 - 11-03 03:41 也出现过 65 次同文案 NPE，当时 0…"
+      "evidence": "…暴露；但 10-30 的 7bb726a 兜底为何在 11-03 未生效无法用 git 解释（当天无对应 unguard 提交），推测镜像构建版本不同，需查…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
-    "root_cause_accuracy": 0,
-    "accuracy_tier": "miss",
-    "deployment_attribution": "unclear",
-    "deployment_attribution_correct": "unclear"
+    "rubric_version": "v6",
+    "root_cause_accuracy": 1,
+    "accuracy_tier": "hit",
+    "deployment_attribution": "excluded",
+    "deployment_attribution_correct": "correct"
   }
 }

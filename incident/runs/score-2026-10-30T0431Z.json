@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0431Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…【根因假设】 置信度：0.95 机制：运行时配置把下游读超时压到 1ms（DOWNSTREAM_TIMEOUT_MS=1），使 target-service 调本机 /profiles/{i…"
+      "evidence": "…置信度：0.95 机制：运行时配置把下游读超时压到 1ms（DOWNSTREAM_TIMEOUT_MS=1），使 target-service 调本机 /profiles/{i…"
     },
     {
       "id": "F4-C2",
@@ -27,7 +27,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…【根因假设】 置信度：0.95 机制：运行时配置把下游读超时压到 1ms（DOWNSTREAM_TIMEOUT_MS=1），使 target…"
+      "evidence": "…置信度：0.95 机制：运行时配置把下游读超时压到 1ms（DOWNSTREAM_TIMEOUT_MS=1），使 target…"
     }
   ],
   "deployment_checks": [
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…【反对证据 / 尚未解释】 - 04:31:55 的容器重建本身没有引入任何代码改动，\"为什么恰好在…"
+      "evidence": "…在 04:31:54.196Z 被改写解释；knob 文件的历史版本不可读，无法给出该值被改为 1ms 的确切时刻。 - 03:51 / 03:57 / 0…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

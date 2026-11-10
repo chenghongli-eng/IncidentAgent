@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-02T0827Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…【根因假设】 置信度：0.97 机制：部署 5f144fa 删除了 OrderService.loadOrder 中对下游 profile 为空的判空保护， 使既有且持续存在的「order 2 → user 999…"
+      "evidence": "…置信度：0.97 机制：部署 5f144fa 删除了 OrderService.loadOrder 中对下游 profile 为空的判空保护， 使既有且持续存在的「order 2 → user 999…"
     },
     {
       "id": "F2-C2",
@@ -41,7 +41,7 @@
       "id": "F2-D1",
       "name": "报告把发布/代码变更说成触发源",
       "result": "PASS",
-      "evidence": "…【根因假设】 置信度：0.97 机制：部署 5f144fa 删除了 OrderService.loadOrder 中对下游 profile 为空…"
+      "evidence": "…置信度：0.97 机制：部署 5f144fa 删除了 OrderService.loadOrder 中对下游 profile 为空…"
     }
   ],
   "quality": [
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…【反对证据 / 尚未解释】 - 今日更早的容器实例(07:18:41Z、08:18:56Z)也出现同…"
+      "evidence": "…08:45:18Z 之间无提交，这些实例显然不是由仓库 HEAD 构建。只读通道无法确定其镜像对应的提交。不影响本次结论（当前实例的代码已直接取证）。 - kn…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

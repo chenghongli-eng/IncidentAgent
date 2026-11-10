@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-26T0432Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…## 【反对证据 / 尚未解释】 - **`.env` 的改动是否人为故意，无法判定**。git 无该文件（…"
+      "evidence": "…- **`.env` 的改动是否人为故意，无法判定**。git 无该文件（未跟踪），无审计日志。`incident/tools…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

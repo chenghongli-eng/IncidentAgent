@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-02T0702Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "markdown-heading",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…## 根因假设 **置信度：0.95** **机制**：容器重建上线了 commit `5f12098`，该提交把 `7bb726a` 已修复的空值防护**删除**，使 `OrderService.loadOrder` 第 29 行重新变成 `order.put(\"ship_to\", profi…"
+      "evidence": "…**置信度：0.95** **机制**：容器重建上线了 commit `5f12098`，该提交把 `7bb726a` 已修复的空值防护**删除**，使 `OrderService.loadOrder` 第 29 行重新变成 `order.put(\"ship_to\", profi…"
     },
     {
       "id": "F2-C2",
@@ -41,7 +41,7 @@
       "id": "F2-D1",
       "name": "报告把发布/代码变更说成触发源",
       "result": "PASS",
-      "evidence": "…## 根因假设 **置信度：0.95** **机制**：容器重建上线了 commit `5f12098`，该提交把 `7bb726a` 已修复的空值防护**删除**，使 `OrderServi…"
+      "evidence": "…**置信度：0.95** **机制**：容器重建上线了 commit `5f12098`，该提交把 `7bb726a` 已修复的空值防护**删除**，使 `OrderServi…"
     }
   ],
   "quality": [
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…## 反对证据 / 尚未解释 1. **本次之前已有一模一样的故障（06:48:53.346Z）**：同栈…"
+      "evidence": "…/ 尚未解释 1. **本次之前已有一模一样的故障（06:48:53.346Z）**：同栈…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

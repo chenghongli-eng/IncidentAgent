@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-26T0222Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…## 【根因假设】 **置信度：0.96** **机制**：commit `17ae5df` 重新引入了 10-23 已被 `e9b5092` 回滚掉的同一处改动——删除 `OrderService.loadOrder` 的 `profile` 判空兜底。`DownstreamClient.fetchProfile` 在下游 404 时按契约返回 `null`，`OrderService.java:29` 抛 NPE，`/api/orders/{id}` 返回 50…"
+      "evidence": "…**置信度：0.96** **机制**：commit `17ae5df` 重新引入了 10-23 已被 `e9b5092` 回滚掉的同一处改动——删除 `OrderService.loadOrder` 的 `profile` 判空兜底。`DownstreamClient.fetchProfile` 在下游 404 时按契约返回 `null`，`OrderService.java:29` 抛 NPE，`/api/orders/{id}` 返回 50…"
     },
     {
       "id": "F2-C2",
@@ -41,7 +41,7 @@
       "id": "F2-D1",
       "name": "报告把发布/代码变更说成触发源",
       "result": "PASS",
-      "evidence": "…## 【根因假设】 **置信度：0.96** **机制**：commit `17ae5df` 重新引入了 10-23 已被 `e9b5092` 回滚掉的同一处改动——删除 `OrderService.loadOrder` 的 `…"
+      "evidence": "…**置信度：0.96** **机制**：commit `17ae5df` 重新引入了 10-23 已被 `e9b5092` 回滚掉的同一处改动——删除 `OrderService.loadOrder` 的 `…"
     }
   ],
   "quality": [
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…## 【反对证据 / 尚未解释】 - **`17ae5df` 为何被产生，无证据**。它与 `0d6d0d4…"
+      "evidence": "…rry-pick / 自动化回灌**，但 git 历史里没有操作者意图记录，**无法证实**。这是本报告最大的未解释项，也正是\"第三次复发\"的风险点。 - **`e…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

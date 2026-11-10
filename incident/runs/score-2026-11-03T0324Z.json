@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-03T0324Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v6",
+  "rubric_version": "v7",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -18,7 +18,7 @@
       "result": "PASS",
       "missing_patterns": [],
       "forbidden_hits": [],
-      "evidence": "…【根因假设】 置信度：0.92 机制：commit 35fb5a3（03:40:55Z）删除了 OrderService.loadOrder 中的 profile 空值兜底， 使「订单 2 → 用户 9999 无 profile 记录…"
+      "evidence": "…置信度：0.92 机制：commit 35fb5a3（03:40:55Z）删除了 OrderService.loadOrder 中的 profile 空值兜底， 使「订单 2 → 用户 9999 无 profile 记录…"
     },
     {
       "id": "F2-C2",
@@ -41,7 +41,7 @@
       "id": "F2-D1",
       "name": "报告把发布/代码变更说成触发源",
       "result": "PASS",
-      "evidence": "…【根因假设】 置信度：0.92 机制：commit 35fb5a3（03:40:55Z）删除了 OrderService.load…"
+      "evidence": "…置信度：0.92 机制：commit 35fb5a3（03:40:55Z）删除了 OrderService.load…"
     }
   ],
   "quality": [
@@ -70,13 +70,13 @@
       "id": "Q4",
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
-      "result": "PASS",
-      "evidence": "…【反对证据 / 尚未解释】 - 旋钮文件在 03:24:53 被编辑、03:25:01 有过一次容器…"
+      "result": "FAIL",
+      "evidence": null
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v5",
+    "rubric_version": "v6",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

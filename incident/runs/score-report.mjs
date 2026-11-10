@@ -138,8 +138,37 @@ import { pathToFileURL } from 'node:url';
  *
  *   改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变），
  *   并且 `rescore-all.mjs` 全量重打 + 归档 v5 快照。
+ *
+ * v6 → v7 改的两处，还是同一个毛病：**判据量的是排版，不是诊断能力**。
+ *   被判的是真实靶子的第一轮（2026-11-10T0820Z，R1）。
+ *   那轮的报告把机制链、三个锚点、分层归因、排除清单、反证清单全做对了
+ *   （人工复核见 RESUME.md「这一轮跑出来什么」），判分却是 0.0：
+ *   六条判据里四条判 NO_SECTION。**不是 Agent 答错，是切段没切出来。**
+ *
+ *   1. 标题比对认**编号前缀**。报告写的是「### 四、根因假设」，
+ *      标题归一后分隔符被去掉，变成「四根因假设」，`startsWith('根因假设')`
+ *      判 false → root_cause / excluded / skipped 三节全切不出来。
+ *      编号是排版，不是字段名的一部分，比对之前摘掉。
+ *      同一条也让「### 七、处置建议（草案…）」这个**边界**找得到——
+ *      找不到边界，root_cause 会一路吞到报告末尾。
+ *   2. 新增第三种写法：**独立成行的加粗小标题**（「**反对证据 / 尚未解释**」）。
+ *      既不是【】契约标记，也不是 markdown 标题行。
+ *      收得很紧：整行只有这个标签（可带 ** 包裹与结尾冒号），且以字段名开头。
+ *      正文里随口一句「反对证据」不算数。
+ *   3. **标记行只当标题，不算正文**（三种写法统一）。
+ *      原来契约标记那行是算进本节正文的，于是字段名可以满足它自己那条判据：
+ *      Q4 认「尚未解释」，而契约标记「【反对证据 / 尚未解释】」里就有这四个字——
+ *      任何照契约写报告的轮次，Q4 都白拿一次命中。
+ *      收紧之后，标记行之后的那半句（`## 【根因假设】置信度 **0.95**` 里的
+ *      「置信度 **0.95**」）仍然保留，正文只少掉字段名本身。
+ *
+ *   **Q2 的层级词表仍然没改**：那轮确实区分了触发源 / 必要条件 / 放大条件，
+ *   Q2 是真命中，不是补出来的。
+ *
+ *   改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变），
+ *   并且 `rescore-all.mjs` 全量重打 + 归档 v6 快照。
  */
-const RUBRIC_VERSION = 'v6';
+const RUBRIC_VERSION = 'v7';
 
 /**
  * 报告契约的固定字段。
@@ -158,6 +187,11 @@ const RUBRIC_VERSION = 'v6';
  * 只认标题行（`^#{1,6}\s+`），且不在代码围栏里——
  * ```bash 块里的 `# 注释` 不是标题（0702Z 那轮的处置建议块里就有）。
  * 正文里提到「根因假设」不算数。
+ *
+ * v7 再加两种，仍然是「同一个毛病」的三次重犯：
+ *   · 标题认**编号前缀**（`### 四、根因假设`）。
+ *   · 字段名还可以写成**独立成行的加粗小标题**（`**反对证据 / 尚未解释**`）。
+ * 三种写法认的是同一件事：字段名在哪儿，内容就在它下面。
  */
 const SECTION_MARKERS = [
   { name: 'root_cause', label: '【根因假设】', heading: '根因假设' },
@@ -185,12 +219,26 @@ function normalizeHeading(text) {
 }
 
 /**
+ * 摘掉标题里的编号前缀：「四、根因假设」→「根因假设」。
+ *
+ * 标题归一把分隔符一并去掉了，所以「四、根因假设」到这一步已经是
+ * 「四根因假设」——开头多出编号，`startsWith('根因假设')` 判 false，
+ * 整节就切不出来。编号是**排版**，不是字段名的一部分，比对之前必须摘掉。
+ */
+function stripEnumerator(text) {
+  return text
+    .replace(/^第[0-9一二三四五六七八九十百千]+[章节条项、.．)）:：]*/, '')
+    .replace(/^[0-9]+[.、)）]*/, '')
+    .replace(/^[一二三四五六七八九十百千]+[、.．)）]*/, '');
+}
+
+/**
  * 找第一个「以 prefix 开头」的 markdown 标题行。
  *
  * 代码围栏里的行不算标题——处置建议块里的 `# 1) 回滚…` 是注释。
  */
 function headingIndex(lines, prefix) {
-  const target = normalizeHeading(prefix);
+  const target = stripEnumerator(normalizeHeading(prefix));
   let inFence = false;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -201,9 +249,62 @@ function headingIndex(lines, prefix) {
     if (inFence) continue;
     const m = line.match(/^\s{0,3}#{1,6}\s+(.*)$/);
     if (!m) continue;
-    if (normalizeHeading(m[1]).startsWith(target)) return i;
+    if (stripEnumerator(normalizeHeading(m[1])).startsWith(target)) return i;
   }
   return -1;
+}
+
+/**
+ * 找「独立成行的加粗小标题」：「**反对证据 / 尚未解释**」。
+ *
+ * 这是字段名的第三种写法：既不是【】契约标记，也不是 markdown 标题行。
+ * 认它的理由和 v4 认 markdown 标题一样——**排版不是诊断能力**：
+ * 字段名摆在那里、内容就在它下面，判据量不到内容才是冤枉。
+ *
+ * 收得很紧，两条都要满足：
+ *   · 整行**只有**这个标签（可带 `**` 包裹），或标签后面跟着冒号和内容
+ *   · 标签以字段名开头
+ * 正文里随口一句「反对证据」不算数。
+ *
+ * 返回 {index, rest}：rest 是标签后面那半句内容（没有就是空串）。
+ */
+function boldLabelIndex(lines, prefix) {
+  const target = stripEnumerator(normalizeHeading(prefix));
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i]
+      .trim()
+      .match(/^(?:\*\*|__)\s*(.+?)\s*(?:\*\*|__)\s*(?:[:：]\s*(.*))?$/);
+    if (!m) continue;
+    const label = stripEnumerator(normalizeHeading(m[1]));
+    if (label.startsWith(target))
+      return { index: i, rest: (m[2] ?? '').trim() };
+  }
+  return null;
+}
+
+/**
+ * 契约标记那一行里，**标记本身之外**还剩什么。
+ *
+ * 例：`## 【根因假设】置信度 **0.95**` → 剩下 `置信度 **0.95**`。
+ */
+function contractMarkerRest(line, label) {
+  const i = line.indexOf(label);
+  if (i < 0) return '';
+  const close = line.indexOf('】', i);
+  const end = close >= 0 ? close + 1 : i + label.length;
+  return line.slice(end).trim();
+}
+
+/**
+ * markdown 标题那一行里，**字段名之外**还剩什么。
+ *
+ * 例：`### 四、根因假设` → 空串；`## 根因假设（置信度 0.9）` → `（置信度 0.9）`。
+ */
+function headingRest(line, name) {
+  const raw = line.replace(/^\s{0,3}#{1,6}\s*/, '');
+  const i = raw.indexOf(name);
+  if (i < 0) return '';
+  return raw.slice(i + name.length).trim();
 }
 
 function extractSections(text) {
@@ -211,28 +312,42 @@ function extractSections(text) {
   const lines = text.split('\n');
   const firstAt = (label) => lines.findIndex((l) => l.includes(label));
 
-  // 契约标记优先；没有标记才退到同名标题。
+  // 契约标记优先；没有标记才退到同名标题；再退到独立成行的加粗小标题。
   // 记下每节是用哪种写法找到的——分数不量排版，但偏离契约要看得见。
   const styles = {};
   const startOf = (m) => {
     const byMarker = firstAt(m.label);
     if (byMarker >= 0) {
       styles[m.name] = 'contract-marker';
-      return byMarker;
+      return {
+        index: byMarker,
+        rest: contractMarkerRest(lines[byMarker], m.label),
+      };
     }
     const byHeading = headingIndex(lines, m.heading);
-    if (byHeading >= 0) styles[m.name] = 'markdown-heading';
-    return byHeading;
+    if (byHeading >= 0) {
+      styles[m.name] = 'markdown-heading';
+      return {
+        index: byHeading,
+        rest: headingRest(lines[byHeading], m.heading),
+      };
+    }
+    const byLabel = boldLabelIndex(lines, m.heading);
+    if (byLabel) {
+      styles[m.name] = 'bold-label';
+      return { index: byLabel.index, rest: byLabel.rest };
+    }
+    return { index: -1, rest: '' };
   };
 
+  const starts = SECTION_MARKERS.map((m) => ({ m, ...startOf(m) }));
   const bounds = [
-    ...SECTION_MARKERS.map(startOf),
+    ...starts.map((s) => s.index),
     ...BOUNDARY_LABELS.map(firstAt),
     ...BOUNDARY_HEADINGS.map((h) => headingIndex(lines, h)),
   ].filter((i) => i >= 0);
 
-  for (const m of SECTION_MARKERS) {
-    const start = startOf(m);
+  for (const { m, index: start, rest } of starts) {
     if (start === -1) {
       out[m.name] = null;
       continue;
@@ -240,7 +355,10 @@ function extractSections(text) {
     // 段落结束于下一个契约标记（根因假设 / 支持证据 / … / 处置建议）
     let end = lines.length;
     for (const b of bounds) if (b > start && b < end) end = b;
-    out[m.name] = lines.slice(start, end).join('\n');
+    // 标记行**只是标题**，不算本节正文：
+    // 否则字段名可以满足它自己那条判据（Q4 认「尚未解释」，
+    // 而契约标记「【反对证据 / 尚未解释】」里就有这四个字）。
+    out[m.name] = [rest, ...lines.slice(start + 1, end)].join('\n');
   }
 
   out.sectionStyles = styles;

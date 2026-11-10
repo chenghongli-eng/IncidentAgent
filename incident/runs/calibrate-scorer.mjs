@@ -336,6 +336,114 @@ function replaceBlock(report, re, to) {
   return report.replace(re, to);
 }
 
+/**
+ * v7 的正对照报告：**带编号的标题 + 独立成行的加粗小标题**。
+ *
+ * 这是真实靶子那一轮（2026-11-10T0820Z）实际用的写法：
+ * 「### 四、根因假设」「### 五、已排除的假设」「**反对证据 / 尚未解释**」。
+ * v6 只认「以字段名开头的标题」，编号前缀让三节切不出来，
+ * 于是那轮六条判据里四条判 NO_SECTION、整轮 0.0——
+ * 而报告的诊断内容是对的。
+ *
+ * 内容用的是合成夹具自己的机制（下游读超时旋钮），不碰真实靶子的答案。
+ */
+const NUMBERED_HEADINGS_REPORT = `# target-service 5xx 故障诊断报告
+
+### 一、三个锚点
+
+| 锚点 | 时间 | 证据 |
+|---|---|---|
+| 告警起始 | 2026-11-04T03:42:04Z | \`metrics alerts\` → activeAt |
+| 异常首次出现 | 2026-11-04T03:41:43Z | \`logs first 'Read timed out'\` |
+| 最近一次容器重建 | 2026-11-04T03:41:38Z | \`deploy current\` → pod_started_at |
+
+### 二、根因假设
+
+**置信度：0.90**
+
+**机制**：运行时把下游读超时压到 1 ms（\`DOWNSTREAM_TIMEOUT_MS\` 由 2000 ms 调成 1 ms，容器重建后生效），回环调用耗时约 2.5 ms 超过预算 → Read timed out → fetchProfile 返回 null → OrderService.loadOrder 没有判空兜底 → NullPointerException → HTTP 500。
+
+**分层**：
+- **触发源（配置层）**：运行时把下游读超时压到 1 ms（超时旋钮 DOWNSTREAM_TIMEOUT_MS=1），容器重建让它生效。
+- **必要条件（缺陷层）**：commit 852d339 删除了 OrderService.loadOrder 的判空兜底。
+- **放大条件**：订单端点与负载探针共用同一条被压到 1 ms 的出站路径。
+
+**支持证据**
+
+- \`runtime env\`：DOWNSTREAM_TIMEOUT_MS=1（重建后进程环境里的生效值）
+- \`logs first 'Read timed out'\`：2026-11-04T03:41:43Z
+- \`actuator health\`：db=UP、redis=UP，仅下游调用超时
+
+**反对证据 / 尚未解释**
+
+1. 我没有直接读到重建前那个容器的进程环境，「它当时是 2000 ms」是推断（重建前 5xx 比例 = 0）。
+2. 那批零星 503 在故障窗口之外，无法在现有证据下归因，未解释。
+
+### 三、已排除的假设
+
+- **资源类（连接池 / 内存 / 线程）**：排除。5xx 是台阶不是缓慢增长。
+- **依赖宕机**：排除。db / redis / ping 均 UP。
+- **流量激增**：排除。请求速率故障前后一致。
+- **最近一次发布**：排除（必要条件，不是触发源）。发布 852d339 删了判空兜底，触发源是运行时旋钮那次改动。
+
+### 四、跳过的步骤及原因
+
+- **git-diff-analysis**：窗口内没有新的代码变更，digest 未变；缺陷来自更早的 852d339。
+`;
+
+/**
+ * v7 近邻正对照：只去掉标题里的编号，内容一个字不动。
+ *
+ * 分数必须与带编号那份**完全一致**——证明 v7 认的是「字段名在不在」，
+ * 不是「编号在不在」。
+ */
+function dropEnumerators(report) {
+  return report.replace(/^(#{1,6}\s+)[一二三四五六七八九十]+、/gm, '$1');
+}
+
+/**
+ * v7 负对照 A：把结构全拆掉，只剩同样字句的散文。
+ *
+ * 标题的编号去掉（标题行本身也去掉）、加粗小标题行也去掉。
+ * 没有结构 → 五节全 NO_SECTION → 0.0。
+ */
+function flattenStructure(report) {
+  return report
+    .replace(/^#{1,6}\s+.*$/gm, '')
+    .replace(/^\s*\*\*(支持证据|反对证据 \/ 尚未解释)\*\*\s*$/gm, '');
+}
+
+/**
+ * v7 负对照 B：把 root_cause 里那句配置侧结论抽掉。
+ *
+ * 其余一字不改（机制链、判空缺失、NPE、对照组全在），
+ * 只是不再把触发源落到配置层 → C1 必须 FAIL。
+ */
+function stripConfigSideFromNumbered(report) {
+  return replaceOnce(
+    replaceOnce(
+      report,
+      '**机制**：运行时把下游读超时压到 1 ms（`DOWNSTREAM_TIMEOUT_MS` 由 2000 ms 调成 1 ms，容器重建后生效），',
+      '**机制**：下游读超时（Read timed out），',
+    ),
+    '- **触发源（配置层）**：运行时把下游读超时压到 1 ms（超时旋钮 DOWNSTREAM_TIMEOUT_MS=1），容器重建让它生效。\n',
+    '- **触发源（状态层）**：下游读超时（Read timed out）。\n',
+  );
+}
+
+/**
+ * v7 负对照 C：只留一个字段标签行，内容一个字没有。
+ *
+ * 证明「字段名不能满足它自己那条判据」：
+ * 契约标记「【反对证据 / 尚未解释】」里就有「尚未解释」四个字，
+ * v6 把它算进本节正文，于是 Q4 白拿一次命中。
+ * v7 起标记行只当标题 → against 节里必须**查不到**「尚未解释」。
+ */
+const LABEL_ONLY_REPORT = `# 空报告
+
+**反对证据 / 尚未解释**
+`;
+
 const CASES = [
   {
     name: '10-27 F4 报告 × F4 真值',
@@ -490,6 +598,57 @@ const CASES = [
     truth: join(root, 'runs/ground-truth/F4.json'),
     expect: { accuracy: 0.0, deployment: 'relevant', correct: 'wrong' },
     expect_deployment_checks: { 'F4-D1': 'FAIL', 'F4-D2': 'PASS' },
+  },
+  {
+    name: '编号标题 + 加粗小标题的报告 × F4 真值（v7 正对照 A：v6 会判 0.0）',
+    report: null,
+    inline: NUMBERED_HEADINGS_REPORT,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 1.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'PASS', 'F4-C2': 'PASS' },
+    expect_deployment_checks: { 'F4-D1': 'PASS', 'F4-D2': 'FAIL' },
+    // 编号必须真的在标题上：否则这一条就是在考「本来就能过的那份」。
+    expect_present: { section: 'whole', pattern: '### 二、根因假设' },
+  },
+  {
+    name: '同一份报告去掉标题编号（v7 近邻正对照 B：编号只是排版）',
+    report: null,
+    inline: NUMBERED_HEADINGS_REPORT,
+    mutate: dropEnumerators,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 1.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'PASS', 'F4-C2': 'PASS' },
+    expect_deployment_checks: { 'F4-D1': 'PASS', 'F4-D2': 'FAIL' },
+    expect_absent: { section: 'whole', pattern: '### 二、根因假设' },
+  },
+  {
+    name: '同一份报告拆掉全部结构（v7 负对照 A：没结构就没有节）',
+    report: null,
+    inline: NUMBERED_HEADINGS_REPORT,
+    mutate: flattenStructure,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'NO_SECTION' },
+  },
+  {
+    name: '同一份报告抽掉 root_cause 里的配置侧结论（v7 负对照 B：没放松成空白支票）',
+    report: null,
+    inline: NUMBERED_HEADINGS_REPORT,
+    mutate: stripConfigSideFromNumbered,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'FAIL', 'F4-C2': 'PASS' },
+    // 环境变量名在支持证据节里**仍然**有：C1 仍然 FAIL 才说明它量的是结论。
+    expect_present: { section: 'whole', pattern: 'DOWNSTREAM_TIMEOUT_MS' },
+  },
+  {
+    name: '只有一个字段标签行、没有内容（v7 负对照 C：字段名不能满足自己那条判据）',
+    report: null,
+    inline: LABEL_ONLY_REPORT,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'unclear', correct: 'unclear' },
+    expect_criteria: { 'F4-C1': 'NO_SECTION' },
+    expect_absent: { section: 'against', pattern: '尚未解释' },
   },
 ];
 
