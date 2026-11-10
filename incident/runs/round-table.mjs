@@ -63,16 +63,24 @@ function resolveRepoPath(raw) {
  * 于是这一轮**照常被算成有效证据**。
  * 所以这里解析失败就让它炸：宁可表格生成不出来，也不能悄悄放行。
  */
-function auditTranscript(transcriptPath) {
+function auditTranscript(
+  transcriptPath,
+  { real = false, logsDir = null } = {},
+) {
   if (!transcriptPath || !existsSync(transcriptPath)) return null;
-  const r = spawnSync(
-    NODE,
-    [join(here, 'channel-audit.mjs'), transcriptPath, '--json'],
-    {
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-    },
-  );
+  const args = [join(here, 'channel-audit.mjs'), transcriptPath, '--json'];
+  // 真实靶子的证据面与答案键跟夹具不是一套（工作区、日志目录、真值、启动规格），
+  // 审计必须带着同一套参数跑，否则靶子自己的日志目录会被算成「越界」。
+  // 参数跟 run-round.mjs 里那次审计逐字一致——两次审计不是同一个口径，
+  // 对账就必然对不上，于是好轮次被误判成无效。
+  if (real) {
+    args.push('--real');
+    if (logsDir) args.push('--logs-dir', logsDir);
+  }
+  const r = spawnSync(NODE, args, {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
   try {
     return JSON.parse(r.stdout);
   } catch (e) {
@@ -106,8 +114,12 @@ for (const f of manifests) {
    * 口径变更的那次就发生过：0738Z 的记录是旧版脚本写的「污染 0 处」，
    * 修好相对路径判定后是「污染 1 处」。
    */
+  const isReal = m.target?.mode === 'descriptor';
   const fresh = m.agent?.transcript
-    ? auditTranscript(resolveRepoPath(m.agent.transcript))
+    ? auditTranscript(resolveRepoPath(m.agent.transcript), {
+        real: isReal,
+        logsDir: m.target?.facts?.measured_logs_dir ?? null,
+      })
     : null;
   let auditMismatch = null;
   if (fresh) {
