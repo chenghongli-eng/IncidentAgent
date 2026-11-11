@@ -179,11 +179,16 @@ for (const f of scoreFiles) {
 
   // 归档：旧文件原样保留，文件名带上旧版本号。
   const oldVersion = old.rubric_version ?? 'v0';
-  // 换了真值文件时，归档名带上真值文件名：否则同一轮在两种判据下的两份分数
-  // 会抢同一个归档名，护栏会在第二次重打时误报「有人改过这一轮」。
-  const truthTag = truthOverrideApplies
-    ? `.${basename(truthPath).replace(/\.json$/, '')}`
-    : '';
+  // 换了真值文件时，归档名带上**旧**真值的文件名——归档件里装的是旧判据打出的分，
+  // 名字就得说清它是哪一版判据的产物。（早先写成了新判据的名字，于是归档件
+  // 顶着新版本号、里面却是旧分数；已修。）
+  const oldTruthPath = resolveMaybe(old.ground_truth);
+  const truthTag =
+    truthOverrideApplies &&
+    oldTruthPath &&
+    oldTruthPath !== truthPath
+      ? `.${basename(oldTruthPath).replace(/\.json$/, '')}`
+      : '';
   const archiveName = `score-${stamp}.${oldVersion}${truthTag}.json`;
   const archivePath = join(DIR, archiveName);
   if (existsSync(archivePath)) {

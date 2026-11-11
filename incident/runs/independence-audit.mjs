@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 样本独立性审计：每一轮开跑时，证据面上有没有**早于本轮注入**的痕迹。
+ * 样本独立性审计：每一轮开跑时，它的**每一个证据面**上有没有**早于本轮注入**的痕迹。
  *
  * 为什么要有这个审计：
  *
@@ -11,52 +11,71 @@
  *
  *   那种命中不是「越界」，是**样本不独立**：命中率不能拿它当分母。
  *
- * 怎么量：
+ * 这个脚本量三张面（每一面都是「本轮 Agent 读得到、且装着答案的地方」）：
  *
- *   一轮的日志面 = 「本轮基线归档之后新写的内容」。要判断它干不干净，
- *   就看这个内容里有没有**时间戳早于本轮注入时刻**的痕迹行。
+ *   1. logs_channel —— Agent 的日志通道（`LOG_DIR` 指向的那个目录）。
+ *      轮次之间靠「归档」清干净：每轮开跑前把上一轮的内容挪走。
+ *      量法：通道面里有没有**时间戳早于本轮注入**的痕迹行。
  *
- *   内容从哪来：本轮基线时归档出去的那一批日志（target.baseline.log_archive.dest）
- *   记的是**上一轮**留下的东西；本轮开跑时的日志面，要到**下一轮**基线
- *   归档时才被完整收走。所以：
+ *   2. logs_fault —— **运行中那个实例**的日志目录。分相规格（发布类故障）
+ *      下它和通道面**不是同一个目录**：故障相跑在自己的 run 目录里，
+ *      而通道面还指着基线相的旧实例。量法同上。
  *
- *     · 有下一轮 → 下一轮的归档目录就是本轮日志面的快照；
- *     · 没有下一轮（最后轮）→ 用现在的日志目录。
+ *   3. source_repo —— 工作区里的源码快照（git 仓库）。发布类故障的答案
+ *      （阈值写进了哪份配置、哪个提交引入的）就写在这份快照里，
+ *      而「每一轮回到基线提交重新注入」**并不会**把上一轮的注入提交
+ *      从对象库里抹掉：它还躺在 .git 里，reflog 与台账都指着它的 sha，
+ *      `git show <sha>` 照样读得到。量法：
  *
- *   痕迹行怎么认：`DiskSpaceHealthIndicator - Free disk space below threshold`
- *   （这一轮故障机制的日志指纹；换个故障机制要换指纹，见 TRACE_RE）。
+ *        外来的提交 = 提交时间早于本轮注入，且**不是**本轮 HEAD 的祖先；
+ *        其中「带着答案的」= 增删行与本轮注入提交的签名一致（注释行不算）。
  *
- *   日志里的时间戳是**本地时区**（靶子的 TZ=Asia/Shanghai），manifest 里的
- *   注入时刻是 UTC。差 8 小时，换算错了会让「本轮自己的痕迹」被当成
- *   「前轮痕迹」——所以脚本最后会自检：最后一轮自己的痕迹必须全部晚于
- *   它的注入时刻，否则报错退出，不给出一个看着像样其实错的数。
+ *        签名一致这个判据是**答案无关**的：它拿本轮自己的注入提交当尺子，
+ *        脚本里不写任何关于故障机制的字眼。
+ *
+ * 三张面都量到、且都是 0 痕迹，这一轮才算独立。
+ * **量不到的（目录没了、仓库没了）一律记 unknown，不许当成干净**——
+ * 一个空面和一个干净面长得一模一样，正是本项目栽过的跟头。
  *
  * 用法：
- *   node incident/runs/independence-audit.mjs <rounds目录>
- *   node incident/runs/independence-audit.mjs <rounds目录> --json
+ *   node incident/runs/independence-audit.mjs <rounds目录> [--json]
+ *   node incident/runs/independence-audit.mjs <rounds目录> --source-repo <源码快照目录>
+ *   node incident/runs/independence-audit.mjs <rounds目录> --surface-map <映射.json>
+ *
+ *   --surface-map：给**已经跑完**、当时没把证据面记进 manifest 的轮次补一份
+ *   映射（{"<轮次戳>": "<日志面目录>"}）。这是补录，不是推断——映射里写什么，
+ *   审计就量什么；写错的映射给出错的数（所以映射本身要有出处）。
+ *
+ *   --out <文件>：产物写到别处。默认写 <rounds目录>/independence-audit.json
+ *   （指标表读它）；改判据前后要并排比对时，用它另存一份，不覆盖旧的。
  *
  * 产物：<rounds目录>/independence-audit.json（指标表会读它）。
  */
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
-
-/**
- * 故障痕迹行：<时间戳> … DiskSpaceHealthIndicator … Free disk space below threshold …
- *
- * 同一个应用有两种日志格式，日志行长得不一样：
- *   · 文件日志：`… 10:09:26.480 [http-nio-…-exec-1] WARN  o.s.boot…DiskSpaceHealthIndicator - Free disk space below threshold. …`
- *   · 控制台日志（launch.log）：`… 10:09:26.480  WARN 112768 --- [.1-12306-exec-1] o.s.b.a.system.DiskSpaceHealthIndicator  : Free disk space below threshold. …`
- * 所以这里只锚「行首时间戳」和「两个关键词」，中间的格式差异不管。
- */
-const TRACE_RE =
-  /^(?<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+).*DiskSpaceHealthIndicator.*Free disk space below threshold/;
-
-/** 靶子日志用的时区偏移（靶子的启动脚本里导出 TZ=Asia/Shanghai）。 */
-const LOG_TZ_OFFSET_MINUTES = 8 * 60;
+import { join, resolve } from 'node:path';
+import {
+  TRACE_RE,
+  LOG_TZ_OFFSET_MINUTES,
+  countTraces,
+  measureSourceSurface,
+} from './independence-surfaces.mjs';
 
 const args = process.argv.slice(2);
 const DIR = resolve(args.find((a) => !a.startsWith('-')) ?? '.');
 const AS_JSON = args.includes('--json');
+
+function optValue(flag) {
+  const i = args.indexOf(flag);
+  return i >= 0 && args[i + 1] && !args[i + 1].startsWith('-') ? args[i + 1] : null;
+}
+
+const SOURCE_REPO = optValue('--source-repo');
+const PRISTINE_REPO = optValue('--pristine-repo');
+const SURFACE_MAP_PATH = optValue('--surface-map');
+const OUT_PATH = optValue('--out');
+const SURFACE_MAP = SURFACE_MAP_PATH
+  ? JSON.parse(readFileSync(resolve(SURFACE_MAP_PATH), 'utf8'))
+  : {};
 
 if (!existsSync(DIR)) {
   process.stderr.write(`轮次目录不存在：${DIR}\n`);
@@ -69,52 +88,7 @@ function parseUtc(value) {
   return Number.isNaN(t) ? null : t;
 }
 
-/** 日志里的本地时间戳 → UTC 毫秒 */
-function localStampToUtc(line) {
-  const m = TRACE_RE.exec(line);
-  if (!m) return null;
-  const naive = Date.parse(m.groups.ts.replace(' ', 'T') + 'Z');
-  if (Number.isNaN(naive)) return null;
-  return naive - LOG_TZ_OFFSET_MINUTES * 60_000;
-}
-
-/** 递归列出目录下所有 .log 文件（归档目录是嵌套的：<stamp>/logs/*.log）。 */
-function listLogFiles(dir) {
-  const out = [];
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...listLogFiles(p));
-    else if (entry.name.endsWith('.log')) out.push(p);
-  }
-  return out;
-}
-
-/**
- * 数痕迹行。按时间戳去重：控制台日志和应用文件日志是同一批行的两种格式，
- * 同一行会被算两遍——那是重复计数，不是两条证据。
- */
-function countTraces(dir, beforeUtc) {
-  const stamps = new Set();
-  if (!existsSync(dir)) return { total: 0, stale: 0, firstStamp: null, dir };
-  for (const file of listLogFiles(dir)) {
-    const text = readFileSync(file, 'utf8');
-    for (const line of text.split('\n')) {
-      const ts = localStampToUtc(line);
-      if (ts === null) continue;
-      stamps.add(ts);
-    }
-  }
-  const sorted = [...stamps].sort((a, b) => a - b);
-  const stale =
-    beforeUtc === null ? 0 : sorted.filter((t) => t < beforeUtc).length;
-  return {
-    total: sorted.length,
-    stale,
-    firstStamp: sorted.length ? new Date(sorted[0]).toISOString() : null,
-    dir,
-  };
-}
+// ── 轮次与证据面 ─────────────────────────────────────────────────────────
 
 const manifests = readdirSync(DIR)
   .filter((f) => /^round-manifest-.*\.json$/.test(f))
@@ -125,38 +99,144 @@ const manifests = readdirSync(DIR)
   );
 
 /**
- * 每一轮的「日志面快照」：下一轮基线时归档出去的那一批。
+ * 日志通道面的快照：下一轮基线时归档出去的那一批。
  * 没有下一轮就用现在的日志目录。
  */
-function surfaceDirFor(index) {
+function channelSurfaceFor(index) {
   for (let i = index + 1; i < manifests.length; i += 1) {
     const dest = manifests[i]?.target?.baseline?.log_archive?.dest ?? null;
     if (dest && existsSync(dest))
-      return { dir: dest, from: manifests[i].stamp };
+      return { dir: dest, from: '下一轮基线归档', fromStamp: manifests[i].stamp };
   }
-  const logsDir = manifests[index]?.target?.facts?.logs_dir ?? null;
+  const logsDir = manifests[index]?.target?.facts?.measured_logs_dir ?? null;
   if (logsDir && existsSync(logsDir)) {
-    return { dir: logsDir, from: '(当前日志目录)' };
+    return { dir: logsDir, from: '当前日志目录', fromStamp: null };
   }
   return null;
 }
 
+/**
+ * 运行中那个实例的日志面（故障相）。
+ *
+ * 三种来源，优先级从高到低：
+ *   · manifest 里记的 evidence_surface（分相规格：故障相跑在自己的目录里）；
+ *   · --surface-map 补录（当时没记进 manifest 的轮次）；
+ *   · `same-as-channel`（未分相的轮次：跑的就是通道面那个目录）。
+ *
+ * 「未分相」不是猜的：那一批的启动规格只有一个 run 目录，靶子的工作目录
+ * 就是它，日志落在它下面，而通道面指向的正是那个目录。映射文件里写
+ * `same-as-channel` 就是这句话的书面形式，出处随映射一起存。
+ */
+function faultSurfaceFor(m, channelSurface) {
+  const recorded = m.injection?.evidence_surface?.dir ?? null;
+  if (recorded) return { dir: recorded, from: 'manifest 记录的证据面' };
+  const mapped = SURFACE_MAP[m.stamp] ?? null;
+  if (mapped === 'same-as-channel') {
+    if (!channelSurface) return null;
+    return {
+      dir: channelSurface.dir,
+      from: '与通道面同目录（--surface-map 标注）',
+    };
+  }
+  if (mapped) return { dir: resolve(mapped), from: '--surface-map 补录' };
+  return null;
+}
+
 const rows = [];
+const skipped = [];
 for (let i = 0; i < manifests.length; i += 1) {
   const m = manifests[i];
   const injectedAt = parseUtc(m.injection?.at ?? null);
-  const surface = surfaceDirFor(i);
-  if (!injectedAt || !surface) continue;
-  const counted = countTraces(surface.dir, injectedAt);
+  // 没有注入时刻的轮次（dry-run、起跑就中止的）根本不是一轮样本。
+  // 让它们进分母，等于把「没跑」当成「跑了而且干净」。
+  if (injectedAt === null) {
+    skipped.push({
+      stamp: m.stamp ?? null,
+      why: 'manifest 里没有注入时刻（这一轮没有真正注入故障）',
+    });
+    continue;
+  }
+  const surfaces = [];
+
+  // 1. 日志通道面
+  const channel = channelSurfaceFor(i);
+  if (!channel) {
+    surfaces.push({
+      surface: 'logs_channel',
+      status: 'not_measured',
+      why: '找不到这一轮通道面的快照（既没有下一轮归档，也没有当前日志目录）',
+      traces_total: null,
+      traces_before_injection: null,
+    });
+  } else {
+    const counted = countTraces(channel.dir, injectedAt);
+    surfaces.push({
+      surface: 'logs_channel',
+      status: 'measured',
+      dir: channel.dir,
+      from: channel.from,
+      from_stamp: channel.fromStamp,
+      traces_total: counted.total,
+      traces_before_injection: counted.stale,
+      first_trace: counted.firstStamp,
+    });
+  }
+
+  // 2. 运行实例的日志面（故障相）
+  const fault = faultSurfaceFor(m, channel);
+  if (!fault) {
+    surfaces.push({
+      surface: 'logs_fault',
+      status: 'not_measured',
+      why:
+        '找不到运行实例的日志目录（manifest 没记 evidence_surface，也没有 --surface-map 补录）',
+      traces_total: null,
+      traces_before_injection: null,
+    });
+  } else {
+    const counted = countTraces(fault.dir, injectedAt);
+    surfaces.push({
+      surface: 'logs_fault',
+      status: 'measured',
+      dir: fault.dir,
+      from: fault.from,
+      traces_total: counted.total,
+      traces_before_injection: counted.stale,
+      first_trace: counted.firstStamp,
+    });
+  }
+
+  // 3. 源码面（git）
+  const repo = m.injection?.source_repo ?? SOURCE_REPO ?? null;
+  surfaces.push({
+    surface: 'source_repo',
+    ...measureSourceSurface(repo ? resolve(repo) : null, {
+      head: m.injection?.release_commit ?? null,
+      injectedAt,
+      pristineRepo: PRISTINE_REPO ? resolve(PRISTINE_REPO) : null,
+    }),
+  });
+
+  const measured = surfaces.filter((s) => s.status === 'measured');
+  const notMeasured = surfaces.filter((s) => s.status === 'not_measured');
+  const staleTraces = measured.reduce(
+    (acc, s) =>
+      acc +
+      (s.surface === 'source_repo'
+        ? (s.foreign_count ?? 0)
+        : (s.traces_before_injection ?? 0)),
+    0,
+  );
+  const verdict =
+    notMeasured.length > 0 ? 'unknown' : staleTraces > 0 ? 'contaminated' : 'independent';
+
   rows.push({
     stamp: m.stamp,
-    injected_at: m.injection.at,
-    surface_dir: surface.dir,
-    surface_from: surface.from,
-    traces_total: counted.total,
-    traces_before_injection: counted.stale,
-    independent: counted.stale === 0,
-    measured: true,
+    injected_at: m.injection?.at ?? null,
+    surfaces,
+    verdict,
+    measured_surfaces: measured.length,
+    unmeasured_surfaces: notMeasured.length,
   });
 }
 
@@ -165,46 +245,70 @@ for (let i = 0; i < manifests.length; i += 1) {
  * 换算错了（时区差 8 小时搞反）会让这一条不成立——那就别给数。
  */
 const last = rows[rows.length - 1];
-if (last && last.traces_total > 0 && last.traces_before_injection > 0) {
-  process.stderr.write(
-    `自检没过：最后一轮 ${last.stamp} 有 ${last.traces_before_injection}/${last.traces_total} ` +
-      '条痕迹早于它的注入时刻。日志时间戳的时区换算多半错了，这个数不能用。\n',
-  );
-  process.exit(1);
+if (last) {
+  const chan = last.surfaces.find((s) => s.surface === 'logs_channel');
+  const fault = last.surfaces.find((s) => s.surface === 'logs_fault');
+  for (const s of [chan, fault]) {
+    if (s && s.status === 'measured' && s.traces_total > 0 && s.traces_before_injection > 0) {
+      process.stderr.write(
+        `自检没过：最后一轮 ${last.stamp} 的 ${s.surface} 有 ${s.traces_before_injection}/${s.traces_total} ` +
+          '条痕迹早于它的注入时刻。日志时间戳的时区换算多半错了，这个数不能用。\n',
+      );
+      process.exit(1);
+    }
+  }
 }
 
 const out = {
   $comment:
-    '样本独立性审计：每一轮开跑时，证据面上有没有早于本轮注入的痕迹。' +
-    '指标表据此把被污染的轮次剔出分母。',
+    '样本独立性审计：每一轮开跑时，它的每一个证据面（日志通道面、运行实例日志面、源码快照）上' +
+    '有没有早于本轮注入的痕迹。指标表据此把被污染的轮次剔出分母。' +
+    '量不到的面记 unknown，不当成干净。',
   generated_at: new Date().toISOString(),
   trace_pattern: TRACE_RE.source,
   log_tz_offset_minutes: LOG_TZ_OFFSET_MINUTES,
+  source_repo_arg: SOURCE_REPO ? resolve(SOURCE_REPO) : null,
+  pristine_repo_arg: PRISTINE_REPO ? resolve(PRISTINE_REPO) : null,
+  surface_map: SURFACE_MAP_PATH ? resolve(SURFACE_MAP_PATH) : null,
   rounds: rows,
-  contaminated: rows.filter((r) => !r.independent).map((r) => r.stamp),
+  independent: rows.filter((r) => r.verdict === 'independent').map((r) => r.stamp),
+  contaminated: rows.filter((r) => r.verdict === 'contaminated').map((r) => r.stamp),
+  unknown: rows.filter((r) => r.verdict === 'unknown').map((r) => r.stamp),
 };
 // 一轮都没量到（夹具轮次没有真实日志面）就不留空产物——
 // 一个内容为空的审计文件会被误读成「审过了」。
 if (rows.length > 0) {
-  writeFileSync(
-    join(DIR, 'independence-audit.json'),
-    JSON.stringify(out, null, 2) + '\n',
-  );
+  const outPath = OUT_PATH ? resolve(OUT_PATH) : join(DIR, 'independence-audit.json');
+  out.product = outPath;
+  writeFileSync(outPath, JSON.stringify(out, null, 2) + '\n');
 }
 
 if (AS_JSON) {
   console.log(JSON.stringify(out, null, 2));
 } else {
   console.log(`独立性审计：扫的目录 ${DIR}\n`);
-  console.log('| 轮次 | 注入时刻 | 日志面痕迹 | 早于本轮注入 | 独立 |');
-  console.log('| --- | --- | --- | --- | --- |');
+  console.log(
+    '| 轮次 | 通道面痕迹 | 故障面痕迹 | 源码面外来提交（带答案的） | 量到的面 | 判定 |',
+  );
+  console.log('| --- | --- | --- | --- | --- | --- |');
   for (const r of rows) {
+    const chan = r.surfaces.find((s) => s.surface === 'logs_channel');
+    const fault = r.surfaces.find((s) => s.surface === 'logs_fault');
+    const src = r.surfaces.find((s) => s.surface === 'source_repo');
+    const cell = (s, kind) =>
+      s.status !== 'measured'
+        ? `（${s.status === 'not_applicable' ? '不适用' : '量不到'}）`
+        : kind === 'src'
+          ? `${s.foreign_count}（${s.answering_count}）`
+          : `${s.traces_before_injection}/${s.traces_total}`;
     console.log(
-      `| ${r.stamp} | ${r.injected_at} | ${r.traces_total} | ${r.traces_before_injection} | ${r.independent ? '是' : '**否**'} |`,
+      `| ${r.stamp} | ${cell(chan)} | ${cell(fault)} | ${cell(src, 'src')} | ` +
+        `${r.measured_surfaces}/${r.surfaces.length} | ` +
+        `${r.verdict === 'independent' ? '独立' : r.verdict === 'contaminated' ? '**污染**' : '**未知**'} |`,
     );
   }
   console.log(
-    `\n独立轮 ${rows.filter((r) => r.independent).length}/${rows.length}；` +
-      `产物 ${join(DIR, 'independence-audit.json')}`,
+    `\n独立 ${out.independent.length}｜污染 ${out.contaminated.length}｜未知 ${out.unknown.length}` +
+      `（共 ${rows.length} 轮）\n产物 ${join(DIR, 'independence-audit.json')}`,
   );
 }

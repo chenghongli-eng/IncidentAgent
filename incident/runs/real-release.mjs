@@ -63,6 +63,40 @@ function git(repo, args) {
 }
 
 /**
+ * 把实验自己留下的提交从源码快照里清掉。
+ *
+ * 清两类东西：
+ *   · reflog 里的条目（`git reflog` 能看见每一次 checkout/commit，
+ *     上一轮的注入提交就在里面）；
+ *   · 不可达的对象（提交本身）。只清 reflog 不够：台账里记着上一轮的
+ *     commit sha，Agent 拿着 sha 照样能 `git show` 出它的 diff——
+ *     对象必须一起清掉，才真的「读不到」。
+ *
+ * 为什么不换成「每一轮一份全新克隆」：克隆要留一份旧的才有对照，
+ * 而旧的正是要清的东西。这里清的是**实验自己**的提交，项目自带的
+ * 历史都在 ref 上（develop-v2 等分支），gc 不会动它们。
+ */
+export function purgeLabCommits(repo) {
+  const before = git(repo, [
+    'cat-file',
+    '--batch-all-objects',
+    '--batch-check=%(objectname) %(objecttype)',
+  ])
+    .split('\n')
+    .filter((l) => l.endsWith(' commit')).length;
+  git(repo, ['reflog', 'expire', '--expire=now', '--all']);
+  git(repo, ['gc', '--prune=now', '--quiet']);
+  const after = git(repo, [
+    'cat-file',
+    '--batch-all-objects',
+    '--batch-check=%(objectname) %(objecttype)',
+  ])
+    .split('\n')
+    .filter((l) => l.endsWith(' commit')).length;
+  return { commits_before: before, commits_after: after };
+}
+
+/**
  * 把磁盘阈值插进 `management:` 块里。
  *
  * 幂等：已经有阈值了就原样返回。插入点是 `management:` 下一行的同缩进层，
@@ -188,6 +222,17 @@ export function buildRelease(opts) {
 
   // 1. 源码侧：回到基线提交 → 落改动 → 提交。
   git(repo, ['checkout', '--detach', baseCommit]);
+  // 把**上一轮**留下的注入提交从这份快照里清掉，再落这一轮的。
+  //
+  // 为什么非清不可：`git checkout --detach <基线>` 只是把 HEAD 移回去，
+  // 上一轮那个注入提交还躺在对象库里（reflog 与台账都指着它的 sha，
+  // `git show <sha>` 照样读得到它的 diff）。于是第二轮的 Agent 读到的
+  // 源码面里，**上一轮的答案**原封不动地摆在那儿——那一轮的命中是被
+  // 前一轮提示过的命中，样本不独立。
+  //
+  // 清的方式是「让它们既没有 ref 也读不到」：先过期 reflog，再 gc 掉
+  // 不可达对象。项目自带的提交都在 ref 上，不受影响。
+  purgeLabCommits(repo);
   const srcPath = join(repo, sourceFile);
   if (!existsSync(srcPath)) {
     throw new ReleaseError(`源码里没有 ${sourceFile}：${srcPath}`);

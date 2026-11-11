@@ -70,8 +70,11 @@ const { writeEntries } = await import(
 const { resolveTarget, targetProfile, applicationLabel } = await import(
   new URL('../targets/descriptor.mjs', import.meta.url).href
 );
-const { realTargetPreflight, realDeps } = await import(
+const { realTargetPreflight, realDeps, heldLogFiles } = await import(
   new URL('./target-preflight.mjs', import.meta.url).href
+);
+const { measureSourceSurface, pristineOf } = await import(
+  new URL('./independence-surfaces.mjs', import.meta.url).href
 );
 const {
   loadSpec,
@@ -289,6 +292,29 @@ mkdirSync(OUT_DIR, { recursive: true });
 const REPORT_PATH = join(OUT_DIR, `agent-report-${STAMP}.md`);
 const SCORE_PATH = join(OUT_DIR, `score-${STAMP}.json`);
 const MANIFEST_PATH = join(OUT_DIR, `round-manifest-${STAMP}.json`);
+
+/**
+ * 这一轮的证据面（运行实例的日志目录）在哪。
+ *
+ * 从进程**自己持有的** .log 文件反推：同一个目录下文件最多的那个就是
+ * 应用自己的日志目录。不用「目录里有 .log」来判——目录里有文件不等于
+ * 这个进程在写它们（靶子停下来之后，目录里的文件还停在那儿）。
+ */
+function pickEvidenceDir(held, runDir) {
+  const byDir = new Map();
+  for (const f of held) {
+    const d = dirname(f);
+    byDir.set(d, (byDir.get(d) ?? 0) + 1);
+  }
+  if (!byDir.size) return null;
+  const ranked = [...byDir.entries()].sort((a, b) => b[1] - a[1]);
+  const top = ranked[0];
+  if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) {
+    const logs = ranked.find(([d]) => d === join(runDir ?? '', 'logs'));
+    if (logs) return logs[0];
+  }
+  return top[0];
+}
 
 const log = (...a) => console.log(...a);
 const section = (t) =>
@@ -1491,6 +1517,51 @@ const REAL_RELEASE_SPEC = {
         );
       }
       const observed = recordRealDeployment('fault');
+
+      // 证据面：这一轮**运行中那个实例**的日志目录。
+      //
+      // 为什么现在才量：分相规格下，故障相跑在自己的 run 目录里，而
+      // 预检时量到的通道目录是**基线相**那个旧实例的。通道指着旧实例，
+      // Agent 读日志就永远读不到这一轮故障的日志——0802Z 那轮的报告
+      // 自己发现了这件事（它写明「本次实例的日志文件不在 logs 通道内」）。
+      //
+      // 量法跟 P2 闸门一样：**看进程自己持有哪些日志文件**，不是看目录里
+      // 有没有 .log。目录里有文件 ≠ 这个进程在写它们。
+      const faultPid = listenPid(LAUNCH_SPEC.port);
+      const held = faultPid ? heldLogFiles(realDeps, faultPid) : [];
+      const evidenceSurface = pickEvidenceDir(held, LAUNCH_SPEC.runDir);
+      if (!evidenceSurface) {
+        fail(
+          '量不出故障态实例的日志目录（进程没有持有任何 .log 文件）：' +
+            `pid=${faultPid ?? '无'}，持有的文件=${held.join(', ') || '一个都没有'}\n` +
+            '  没有证据面就等于这一轮没有日志通道——通道审计会放行一个空面，' +
+            '  而命中率会被算成「它自己看出来的」。',
+        );
+      }
+
+      // 闸门：源码面必须干净——除了本轮自己的注入提交，不能有别的
+      // 「实验留下的提交」躺在里面（那是上一轮的答案）。
+      const pristine = pristineOf(rel.repo);
+      const sourceSurface = measureSourceSurface(rel.repo, {
+        head: built.commit,
+        injectedAt: new Date().toISOString(),
+        pristineRepo: pristine,
+      });
+      if (sourceSurface.status !== 'measured') {
+        fail(
+          `源码面量不了（${sourceSurface.why}）——没有尺子就判不了干净，` +
+            '这一轮不跑。',
+        );
+      }
+      if (sourceSurface.foreign_count > 0) {
+        fail(
+          `源码面不干净：有 ${sourceSurface.foreign_count} 个实验留下的提交` +
+            `（其中 ${sourceSurface.answering_count} 个带着本轮同样的答案签名）：` +
+            `${sourceSurface.foreign.map((f) => f.sha.slice(0, 10)).join(', ')}\n` +
+            '  上一轮的答案还摆在这一轮的证据面里——这一轮不跑。',
+        );
+      }
+
       return {
         changed: ['制品', '发布提交'],
         unchanged: ['运行期进程环境', '源码里的其他文件', '基线制品'],
@@ -1499,6 +1570,14 @@ const REAL_RELEASE_SPEC = {
         release_unit: built.unitDir,
         release_digest: identity.digest,
         observed_digest: observed?.digest ?? null,
+        source_repo: rel.repo,
+        evidence_surface: {
+          dir: evidenceSurface,
+          pid: faultPid,
+          held_log_files: held,
+          source: 'measured-from-running-process',
+        },
+        source_surface_foreign_commits: sourceSurface.foreign_count,
         note: '阈值写进这次发布带进来的配置；运行期进程环境干净（没有对应的环境变量）',
       };
     } catch (err) {
@@ -2235,6 +2314,23 @@ async function main() {
   log(
     `  已注入：${manifest.injection.changed.join('、')}（${manifest.injection.changed.length} 个维度）`,
   );
+
+  // 通道要指着**正在跑的那个实例**的日志，不是预检时量到的那个旧实例。
+  //
+  // 为什么现在才改：预检跑在基线相，那时量到的目录属于基线态的进程；
+  // 故障态起的是**另一个**进程（分相规格下连 run 目录都不同）。
+  // 通道不跟着改，Agent 读日志读到的就是一份停在最后一次启动的旧日志——
+  // 0802Z 那轮的报告自己发现了这件事并写明了它。通道是这批实验的
+  // 一条正式证据通道，指错地方等于没有这条通道。
+  if (REAL_MODE && manifest.injection.evidence_surface?.dir) {
+    const before = PROFILE.measuredLogsDir;
+    PROFILE.measuredLogsDir = manifest.injection.evidence_surface.dir;
+    publishLedgerEnv(grp.folder);
+    log(
+      `  日志通道已指向运行中的实例：${before ?? '（无）'} → ` +
+        `${PROFILE.measuredLogsDir}`,
+    );
+  }
   // 注入这一步对 F2 是「改代码 + 重建」（一次发布），对 F4 是「改旋钮 + 重建」
   // （容器重启但镜像没变）。两种都写：台账记的是**观测**，不是「发布了几次」，
   // 读侧按 (digest, 启动时刻) 分桶才知道这是一次还是两次发布。

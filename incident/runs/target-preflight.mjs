@@ -80,7 +80,7 @@ function listenPid(deps, port) {
  * （「容器 healthy 但日志不增长」）在宿主机进程上长成一个样。
  * 持有写句柄才是「这条日志通道是活的」的证据。
  */
-function heldLogFiles(deps, pid) {
+export function heldLogFiles(deps, pid) {
   const dir = `/proc/${pid}/fd`;
   let entries;
   try {
