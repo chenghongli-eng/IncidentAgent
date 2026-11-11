@@ -169,12 +169,12 @@ R2 是 R1 的**镜像**：症状完全一样（健康检查 503 → 5xx → 告�
 
 已就绪的部件（都在仓库外 / 仓库内分清）：
 
-| 部件              | 位置                                                                  | 状态                                    |
-| ----------------- | --------------------------------------------------------------------- | --------------------------------------- |
-| 启动规格          | `~/incident-lab-archive/lab-data/targets/p2/launch-spec-release.json` | 已写（**R2 编号已从脚本里去掉**）       |
-| 发布构建器        | `incident/runs/real-release.mjs`                                      | 已写（打补丁 → 换 digest → 每轮新目录） |
-| 轮的注入/恢复流程 | `incident/runs/run-round.mjs`（`REAL_RELEASE_SPEC`）                  | 已写（失败会回滚工作区快照）            |
-| 判据              | `~/incident-lab-archive/real-ground-truth/R2.v2.json`                 | **已校准**（见下）                      |
+| 部件              | 位置                                                                        | 状态                                    |
+| ----------------- | --------------------------------------------------------------------------- | --------------------------------------- |
+| 启动规格          | `~/incident-lab-archive/lab-data/targets/p2/launch-spec-release.json`       | 已写（**R2 编号已从脚本里去掉**）       |
+| 发布构建器        | `incident/runs/real-release.mjs`                                            | 已写（打补丁 → 换 digest → 每轮新目录） |
+| 轮的注入/恢复流程 | `incident/runs/run-round.mjs`（`REAL_RELEASE_SPEC`）                        | 已写（失败会回滚工作区快照）            |
+| 判据              | `~/incident-lab-archive/real-ground-truth/R2.v3.json`（v1/v2 归档在同目录） | **已校准 3/3**（见上）                  |
 
 判据校准（正负对照，各一份，**结构完全相同、只有归因方向不同**）：
 
@@ -192,19 +192,21 @@ v2 把**方向**写进 C1（必须出现「触发源/根因/机制 … 本次发
 校准记录：`~/incident-lab-archive/real-ground-truth/R2.calibration.json`，
 对照件在同目录 `controls/`。
 
-### 需要你授权的一件事
+### 需要你授权的一件事（判据文件换名）
 
 `run-round.mjs` 的真值路径默认是 `realTruthDir/<故障编号>.json`。
-R2 的新判据我写在了 **`R2.v2.json`**（新文件），没有覆盖正在服役的 `R2.json`——
-安全分类器把「改仓库外的既有文件」判成需要你点名授权，我没有绕过去。
+R2 现在的判据在 **`R2.v3.json`**（新文件；v1 是 `R2.json`，v2 是 `R2.v2.json`），
+没有覆盖默认路径上的 `R2.json`——安全分类器把「改仓库外的既有文件」判成需要你点名授权，
+我没有绕过去。
 
-要让 R2 跑批用上新判据，二选一：
+批次是用 `--truth` 显式指到 v3 的，**不换也能跑**。想让默认路径也指向新判据，二选一：
 
-- 你说一声「把 `~/incident-lab-archive/real-ground-truth/R2.json` 换成 v2 的内容」，
+- 你说一声「把 `~/incident-lab-archive/real-ground-truth/R2.json` 换成 v3 的内容」，
   我来换（保留旧版为 `R2.v1.json` 归档）；或者
-- 直接在命令行跑：`! cp ~/incident-lab-archive/real-ground-truth/R2.v2.json ~/incident-lab-archive/real-ground-truth/R2.json`
+- 直接在命令行跑：`! cp ~/incident-lab-archive/real-ground-truth/R2.v3.json ~/incident-lab-archive/real-ground-truth/R2.json`
 
-（`run-round.mjs` 也支持 `--truth <路径>` 临时指到别的真值文件，不换也行。）
+（`run-round.mjs` 支持 `--truth <路径>`；`rescore-all.mjs` 现在支持
+`--truth <新真值> --only-fault <故障ID>`，两者必须一起给。）
 
 ### 下一步（按顺序）
 
