@@ -53,9 +53,12 @@ export function listLogFiles(dir) {
  * 两种格式，同一行会被算两遍——那是重复计数，不是两条证据。
  */
 export function countTraces(dir, beforeUtc) {
+  if (!existsSync(dir)) {
+    return { total: 0, stale: 0, firstStamp: null, dir, log_files: 0 };
+  }
+  const files = listLogFiles(dir);
   const stamps = new Set();
-  if (!existsSync(dir)) return { total: 0, stale: 0, firstStamp: null, dir };
-  for (const file of listLogFiles(dir)) {
+  for (const file of files) {
     const text = readFileSync(file, 'utf8');
     for (const line of text.split('\n')) {
       const ts = localStampToUtc(line);
@@ -71,6 +74,7 @@ export function countTraces(dir, beforeUtc) {
     stale,
     firstStamp: sorted.length ? new Date(sorted[0]).toISOString() : null,
     dir,
+    log_files: files.length,
   };
 }
 
@@ -161,8 +165,7 @@ export function measureSourceSurface(repo, { head, injectedAt, pristineRepo }) {
   if (!pristineRepo || !existsSync(pristineRepo)) {
     return {
       status: 'not_measured',
-      why:
-        '没有原始仓库就分不出「实验留下的提交」和「项目本来就有的提交」',
+      why: '没有原始仓库就分不出「实验留下的提交」和「项目本来就有的提交」',
       foreign: [],
       answering: [],
     };

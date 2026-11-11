@@ -66,7 +66,9 @@ const AS_JSON = args.includes('--json');
 
 function optValue(flag) {
   const i = args.indexOf(flag);
-  return i >= 0 && args[i + 1] && !args[i + 1].startsWith('-') ? args[i + 1] : null;
+  return i >= 0 && args[i + 1] && !args[i + 1].startsWith('-')
+    ? args[i + 1]
+    : null;
 }
 
 const SOURCE_REPO = optValue('--source-repo');
@@ -106,7 +108,11 @@ function channelSurfaceFor(index) {
   for (let i = index + 1; i < manifests.length; i += 1) {
     const dest = manifests[i]?.target?.baseline?.log_archive?.dest ?? null;
     if (dest && existsSync(dest))
-      return { dir: dest, from: '下一轮基线归档', fromStamp: manifests[i].stamp };
+      return {
+        dir: dest,
+        from: '下一轮基线归档',
+        fromStamp: manifests[i].stamp,
+      };
   }
   const logsDir = manifests[index]?.target?.facts?.measured_logs_dir ?? null;
   if (logsDir && existsSync(logsDir)) {
@@ -172,13 +178,21 @@ for (let i = 0; i < manifests.length; i += 1) {
     const counted = countTraces(channel.dir, injectedAt);
     surfaces.push({
       surface: 'logs_channel',
-      status: 'measured',
+      // 目录在、但一个 .log 都没有 = 空面，不是干净面。空面和干净面长得
+      // 一模一样，正是本项目反复栽的那一跤——这里按「量不到」记。
+      ...(counted.log_files === 0
+        ? {
+            status: 'not_measured',
+            why: `${channel.dir} 里一个 .log 文件都没有——空面不是干净面`,
+          }
+        : { status: 'measured' }),
       dir: channel.dir,
       from: channel.from,
       from_stamp: channel.fromStamp,
       traces_total: counted.total,
       traces_before_injection: counted.stale,
       first_trace: counted.firstStamp,
+      log_files: counted.log_files,
     });
   }
 
@@ -188,8 +202,7 @@ for (let i = 0; i < manifests.length; i += 1) {
     surfaces.push({
       surface: 'logs_fault',
       status: 'not_measured',
-      why:
-        '找不到运行实例的日志目录（manifest 没记 evidence_surface，也没有 --surface-map 补录）',
+      why: '找不到运行实例的日志目录（manifest 没记 evidence_surface，也没有 --surface-map 补录）',
       traces_total: null,
       traces_before_injection: null,
     });
@@ -197,25 +210,60 @@ for (let i = 0; i < manifests.length; i += 1) {
     const counted = countTraces(fault.dir, injectedAt);
     surfaces.push({
       surface: 'logs_fault',
-      status: 'measured',
+      ...(counted.log_files === 0
+        ? {
+            status: 'not_measured',
+            why: `${fault.dir} 里一个 .log 文件都没有——空面不是干净面`,
+          }
+        : { status: 'measured' }),
       dir: fault.dir,
       from: fault.from,
       traces_total: counted.total,
       traces_before_injection: counted.stale,
       first_trace: counted.firstStamp,
+      log_files: counted.log_files,
     });
   }
 
   // 3. 源码面（git）
-  const repo = m.injection?.source_repo ?? SOURCE_REPO ?? null;
-  surfaces.push({
-    surface: 'source_repo',
-    ...measureSourceSurface(repo ? resolve(repo) : null, {
-      head: m.injection?.release_commit ?? null,
-      injectedAt,
-      pristineRepo: PRISTINE_REPO ? resolve(PRISTINE_REPO) : null,
-    }),
-  });
+  //
+  // 优先用 **manifest 里记的本轮实测**（开跑时量的那份）。
+  //
+  // 为什么不能一律事后重测：源码快照是**共用且会变的**——下一轮开跑时会把
+  // 上一轮的注入提交清掉。事后量到的是「批次结束时那个仓库」，不是「Agent
+  // 当时看到的那个仓库」，量的东西和要判的东西不是一回事。
+  //
+  // 事后重测只作为**补录**（老轮次没有记实测值时用），而且必须在产物里
+  // 标明它是事后重测——读的人得知道这一行的证据是哪种。
+  const recorded = m.injection?.source_surface ?? null;
+  if (recorded && recorded.foreign_count !== undefined) {
+    surfaces.push({
+      surface: 'source_repo',
+      status: 'measured',
+      from: 'manifest 记录的本轮实测（开跑时量的）',
+      measured_at: recorded.measured_at ?? null,
+      head: recorded.head ?? null,
+      foreign_count: recorded.foreign_count,
+      answering_count: recorded.answering_count ?? null,
+      foreign: (recorded.foreign_shas ?? []).map((sha) => ({ sha })),
+      answering: [],
+      note: '这一轮的源码面状态以开跑时的实测为准（开跑后源码快照会被下一轮清理）',
+    });
+  } else {
+    const repo = m.injection?.source_repo ?? SOURCE_REPO ?? null;
+    surfaces.push({
+      surface: 'source_repo',
+      ...measureSourceSurface(repo ? resolve(repo) : null, {
+        head: m.injection?.release_commit ?? null,
+        injectedAt,
+        pristineRepo: PRISTINE_REPO ? resolve(PRISTINE_REPO) : null,
+      }),
+      from: '事后重测（这一轮没记开跑时的实测值）',
+      note:
+        '事后重测量的是「批次结束时那个仓库」的状态，不是开跑时的状态；' +
+        '对共用快照的批次，只能当补录看。',
+    });
+  }
 
   const measured = surfaces.filter((s) => s.status === 'measured');
   const notMeasured = surfaces.filter((s) => s.status === 'not_measured');
@@ -227,8 +275,17 @@ for (let i = 0; i < manifests.length; i += 1) {
         : (s.traces_before_injection ?? 0)),
     0,
   );
+  // 顺序：(1) 有一张面**量到**了脏东西 → 污染；(2) 都干净但有一张面量不到
+  // → 未知；(3) 全量到且全干净 → 独立。
+  //
+  // 为什么污染优先于未知：污染是**已量到的阳性发现**，未知只是「这一面没量
+  // 到」。把已知的脏藏进 unknown 等于把证据降级；但两者都不能记成独立。
   const verdict =
-    notMeasured.length > 0 ? 'unknown' : staleTraces > 0 ? 'contaminated' : 'independent';
+    staleTraces > 0
+      ? 'contaminated'
+      : notMeasured.length > 0
+        ? 'unknown'
+        : 'independent';
 
   rows.push({
     stamp: m.stamp,
@@ -249,7 +306,12 @@ if (last) {
   const chan = last.surfaces.find((s) => s.surface === 'logs_channel');
   const fault = last.surfaces.find((s) => s.surface === 'logs_fault');
   for (const s of [chan, fault]) {
-    if (s && s.status === 'measured' && s.traces_total > 0 && s.traces_before_injection > 0) {
+    if (
+      s &&
+      s.status === 'measured' &&
+      s.traces_total > 0 &&
+      s.traces_before_injection > 0
+    ) {
       process.stderr.write(
         `自检没过：最后一轮 ${last.stamp} 的 ${s.surface} 有 ${s.traces_before_injection}/${s.traces_total} ` +
           '条痕迹早于它的注入时刻。日志时间戳的时区换算多半错了，这个数不能用。\n',
@@ -271,14 +333,20 @@ const out = {
   pristine_repo_arg: PRISTINE_REPO ? resolve(PRISTINE_REPO) : null,
   surface_map: SURFACE_MAP_PATH ? resolve(SURFACE_MAP_PATH) : null,
   rounds: rows,
-  independent: rows.filter((r) => r.verdict === 'independent').map((r) => r.stamp),
-  contaminated: rows.filter((r) => r.verdict === 'contaminated').map((r) => r.stamp),
+  independent: rows
+    .filter((r) => r.verdict === 'independent')
+    .map((r) => r.stamp),
+  contaminated: rows
+    .filter((r) => r.verdict === 'contaminated')
+    .map((r) => r.stamp),
   unknown: rows.filter((r) => r.verdict === 'unknown').map((r) => r.stamp),
 };
 // 一轮都没量到（夹具轮次没有真实日志面）就不留空产物——
 // 一个内容为空的审计文件会被误读成「审过了」。
 if (rows.length > 0) {
-  const outPath = OUT_PATH ? resolve(OUT_PATH) : join(DIR, 'independence-audit.json');
+  const outPath = OUT_PATH
+    ? resolve(OUT_PATH)
+    : join(DIR, 'independence-audit.json');
   out.product = outPath;
   writeFileSync(outPath, JSON.stringify(out, null, 2) + '\n');
 }
@@ -309,6 +377,6 @@ if (AS_JSON) {
   }
   console.log(
     `\n独立 ${out.independent.length}｜污染 ${out.contaminated.length}｜未知 ${out.unknown.length}` +
-      `（共 ${rows.length} 轮）\n产物 ${join(DIR, 'independence-audit.json')}`,
+      `（共 ${rows.length} 轮）\n产物 ${out.product ?? join(DIR, 'independence-audit.json')}`,
   );
 }

@@ -71,19 +71,21 @@
 
 ## 量具（冻结区）
 
-| 脚本                                                                       | 作用                                                                                       |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [runs/score-report.mjs](runs/score-report.mjs)                             | 打分器：读报告 + 判据 → 分数文件                                                           |
-| [runs/calibrate-scorer.mjs](runs/calibrate-scorer.mjs)                     | 判据校准：16 条样例必须与判据预期一致                                                      |
-| [runs/rescore-all.mjs](runs/rescore-all.mjs)                               | 用当前判据重打分全部历史轮次                                                               |
-| [runs/run-round.mjs](runs/run-round.mjs)                                   | 一轮的编排：前置闸门 → 摆静默态 → 清面 → 注入 → 等告警 → 跑 Agent → 通道审计 → 打分 → 恢复 |
-| [runs/channel-audit.mjs](runs/channel-audit.mjs)                           | 通道合规审计：区分**污染**（作废轮次）与**越界**（记录但不作废）                           |
-| [runs/independence-audit.mjs](runs/independence-audit.mjs)                 | 样本独立性审计：证据面上有没有**早于本轮注入**的痕迹（污染 ≠ 不独立，两回事）              |
-| [runs/leak-scan.mjs](runs/leak-scan.mjs)                                   | 泄漏扫描：查工作区外的答案键是否被读进会话                                                 |
-| [runs/gate-w-workspace-isolation.mjs](runs/gate-w-workspace-isolation.mjs) | 闸门 W：工作区与答案键不相邻                                                               |
-| [runs/control-arms.mjs](runs/control-arms.mjs)                             | 受控对照实验：同一次故障的三臂对照，用于验证"两个条件叠加"的论断                           |
-| [runs/round-table.mjs](runs/round-table.mjs)                               | 把 manifest + score 汇总成一张指标表                                                       |
-| `runs/*-control.mjs`                                                       | 负对照：证明量具**认得出**也**认不得**                                                     |
+| 脚本                                                                       | 作用                                                                                                                             |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| [runs/score-report.mjs](runs/score-report.mjs)                             | 打分器：读报告 + 判据 → 分数文件                                                                                                 |
+| [runs/calibrate-scorer.mjs](runs/calibrate-scorer.mjs)                     | 判据校准：16 条样例必须与判据预期一致                                                                                            |
+| [runs/rescore-all.mjs](runs/rescore-all.mjs)                               | 用当前判据重打分全部历史轮次                                                                                                     |
+| [runs/run-round.mjs](runs/run-round.mjs)                                   | 一轮的编排：前置闸门 → 摆静默态 → 清面 → 注入 → 等告警 → 跑 Agent → 通道审计 → 打分 → 恢复                                       |
+| [runs/channel-audit.mjs](runs/channel-audit.mjs)                           | 通道合规审计：区分**污染**（作废轮次）与**越界**（记录但不作废）                                                                 |
+| [runs/independence-audit.mjs](runs/independence-audit.mjs)                 | 样本独立性审计：三张证据面（通道日志 / 运行实例日志 / 源码快照）上有没有**早于本轮注入**的痕迹；量不到的面记 unknown，不当成干净 |
+| [runs/independence-surfaces.mjs](runs/independence-surfaces.mjs)           | 上面那把尺子的实现；`run-round.mjs` 开跑前的源码面闸门用**同一个模块**，两边不能各量各的                                         |
+| [runs/independence-audit-control.mjs](runs/independence-audit-control.mjs) | 独立性审计的负对照（7 条）：有外来提交→污染、去掉就独立、量不到→未知、空目录≠干净、以开跑时实测为准                              |
+| [runs/leak-scan.mjs](runs/leak-scan.mjs)                                   | 泄漏扫描：查工作区外的答案键是否被读进会话                                                                                       |
+| [runs/gate-w-workspace-isolation.mjs](runs/gate-w-workspace-isolation.mjs) | 闸门 W：工作区与答案键不相邻                                                                                                     |
+| [runs/control-arms.mjs](runs/control-arms.mjs)                             | 受控对照实验：同一次故障的三臂对照，用于验证"两个条件叠加"的论断                                                                 |
+| [runs/round-table.mjs](runs/round-table.mjs)                               | 把 manifest + score 汇总成一张指标表                                                                                             |
+| `runs/*-control.mjs`                                                       | 负对照：证明量具**认得出**也**认不得**                                                                                           |
 
 负对照不是形式主义。真实发生过一次：比例量具把 Prometheus 的返回形状认错了，
 C 臂真实的 43.6% 5xx 峰值被读成 **0**——**量具坏了，长得却像台子没炸**。

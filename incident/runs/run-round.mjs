@@ -1578,6 +1578,23 @@ const REAL_RELEASE_SPEC = {
           source: 'measured-from-running-process',
         },
         source_surface_foreign_commits: sourceSurface.foreign_count,
+        // 源码面的**本轮实测**，记进 manifest。
+        //
+        // 为什么必须记在 manifest 里、而不是事后让审计去量：源码快照是**共用
+        // 的、而且会变**——下一轮开跑时会把上一轮的注入提交清掉。事后量到的
+        // 是「批次结束时那个仓库」，不是「Agent 当时看到的那个仓库」；用它
+        // 判某一轮的独立性，量的东西和要判的东西不是一回事。
+        //
+        // 开跑时量到的那一份才是那一轮的证据面状态，写在这里。
+        source_surface: {
+          measured_at: new Date().toISOString(),
+          head: built.commit,
+          foreign_count: sourceSurface.foreign_count,
+          answering_count: sourceSurface.answering_count,
+          foreign_shas: sourceSurface.foreign.map((f) => f.sha),
+          pristine_repo: pristine,
+          source: 'measured-at-injection',
+        },
         note: '阈值写进这次发布带进来的配置；运行期进程环境干净（没有对应的环境变量）',
       };
     } catch (err) {

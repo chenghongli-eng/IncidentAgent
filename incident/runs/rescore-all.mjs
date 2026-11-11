@@ -184,9 +184,7 @@ for (const f of scoreFiles) {
   // 顶着新版本号、里面却是旧分数；已修。）
   const oldTruthPath = resolveMaybe(old.ground_truth);
   const truthTag =
-    truthOverrideApplies &&
-    oldTruthPath &&
-    oldTruthPath !== truthPath
+    truthOverrideApplies && oldTruthPath && oldTruthPath !== truthPath
       ? `.${basename(oldTruthPath).replace(/\.json$/, '')}`
       : '';
   const archiveName = `score-${stamp}.${oldVersion}${truthTag}.json`;

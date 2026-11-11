@@ -22,7 +22,13 @@
  * 退出码：0 = 全部对照与预期一致；1 = 有一条对不上（审计不能用了）。
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,7 +86,15 @@ function commitInjection(repo, baseCommit, marker, date) {
  *   repo     —— 实验室的源码快照（pristine 的克隆 + 实验留下的提交）
  *   rounds   —— 两轮 round-manifest + 两份日志面
  */
-function makeFixture(root, { withForeignCommit, withStaleTrace, withSecondRound = false }) {
+function makeFixture(
+  root,
+  {
+    withForeignCommit,
+    withStaleTrace,
+    withSecondRound = false,
+    withRecordedForeign = false,
+  },
+) {
   const pristine = join(root, 'pristine');
   const repo = join(root, 'repo');
   const rounds = join(root, 'rounds');
@@ -95,7 +109,11 @@ function makeFixture(root, { withForeignCommit, withStaleTrace, withSecondRound 
   git(pristine, ['init', '-q', '-b', 'develop']);
   writeFileSync(join(pristine, 'app.yaml'), 'server:\n  port: 12306\n');
   git(pristine, ['add', '.']);
-  git(pristine, ['commit', '-q', '-m', '项目基线'], '2025-12-01T00:00:00+00:00');
+  git(
+    pristine,
+    ['commit', '-q', '-m', '项目基线'],
+    '2025-12-01T00:00:00+00:00',
+  );
 
   // 实验室快照：克隆原始仓库。
   execFileSync('git', ['clone', '-q', pristine, repo], { encoding: 'utf8' });
@@ -111,12 +129,21 @@ function makeFixture(root, { withForeignCommit, withStaleTrace, withSecondRound 
       'server:\n  port: 12306\nhealth:\n  diskspace:\n    threshold: 77GB\n# build 更早的一轮\n',
     );
     git(repo, ['add', '.']);
-    git(repo, ['commit', '-q', '-m', '更早一轮的同款注入'], '2025-12-31T00:00:00+00:00');
+    git(
+      repo,
+      ['commit', '-q', '-m', '更早一轮的同款注入'],
+      '2025-12-31T00:00:00+00:00',
+    );
   }
 
   // 每一轮各自的注入提交：**都**建在基线上（真实靶子每轮都回到基线再注入），
   // 签名一样，只是标记行与时刻不同。
-  const ownCommit1 = commitInjection(repo, baseCommit, '# build 第一轮', '2026-01-01T00:09:00+00:00');
+  const ownCommit1 = commitInjection(
+    repo,
+    baseCommit,
+    '# build 第一轮',
+    '2026-01-01T00:09:00+00:00',
+  );
   // 第二轮（如果要的话）用**另一份干净的快照**：只含它自己那一次注入。
   // 这正是修好之后的靶子该有的样子——每轮的源码面里只有本轮自己的注入，
   // 前一轮的提交已经被清掉了。它同时也是「判据没有把所有人一律判污染」的对照。
@@ -126,7 +153,12 @@ function makeFixture(root, { withForeignCommit, withStaleTrace, withSecondRound 
     repo2 = join(root, 'repo-2');
     execFileSync('git', ['clone', '-q', pristine, repo2], { encoding: 'utf8' });
     const base2 = git(repo2, ['rev-parse', 'HEAD']).trim();
-    ownCommit2 = commitInjection(repo2, base2, '# build 第二轮', '2026-01-01T00:19:00+00:00');
+    ownCommit2 = commitInjection(
+      repo2,
+      base2,
+      '# build 第二轮',
+      '2026-01-01T00:19:00+00:00',
+    );
   }
 
   // 日志面：第一轮（含可选的陈旧痕迹）；第二轮（有的话）是干净的收尾轮。
@@ -136,7 +168,14 @@ function makeFixture(root, { withForeignCommit, withStaleTrace, withSecondRound 
   writeFileSync(join(logs1, 'all.log'), lines1.join('\n') + '\n');
   writeFileSync(join(logs2, 'all.log'), traceLine(FRESH_LOCAL_2) + '\n');
 
-  const manifest = (stamp, injectedAt, logs, ownCommit, sourceRepo) => ({
+  const manifest = (
+    stamp,
+    injectedAt,
+    logs,
+    ownCommit,
+    sourceRepo,
+    recordedForeign,
+  ) => ({
     stamp,
     injection: {
       fault: 'CTRL',
@@ -144,18 +183,49 @@ function makeFixture(root, { withForeignCommit, withStaleTrace, withSecondRound 
       release_commit: ownCommit,
       source_repo: sourceRepo ?? repo,
       evidence_surface: { dir: logs, pid: 1, source: '夹具' },
+      ...(recordedForeign
+        ? {
+            // 源码面的**开跑时实测**：这一轮量到源码面里有一个外来的提交。
+            // 仓库本身在这份夹具里是干净的——事后重测会读到 0，
+            // 但那一轮开跑时源码面确实不干净。
+            source_surface: {
+              measured_at: injectedAt,
+              head: ownCommit,
+              foreign_count: 1,
+              answering_count: 1,
+              foreign_shas: ['0123456789abcdef0123456789abcdef01234567'],
+              pristine_repo: pristine,
+              source: 'measured-at-injection',
+            },
+          }
+        : {}),
     },
     target: { facts: { measured_logs_dir: logs } },
   });
   writeFileSync(
     join(rounds, 'round-manifest-2026-01-01T0000Z.json'),
-    JSON.stringify(manifest('2026-01-01T0000Z', INJECT_AT_1, logs1, ownCommit1), null, 2),
+    JSON.stringify(
+      manifest(
+        '2026-01-01T0000Z',
+        INJECT_AT_1,
+        logs1,
+        ownCommit1,
+        repo,
+        withRecordedForeign,
+      ),
+      null,
+      2,
+    ),
   );
   const map = { '2026-01-01T0000Z': logs1 };
   if (withSecondRound) {
     writeFileSync(
       join(rounds, 'round-manifest-2026-01-01T0001Z.json'),
-      JSON.stringify(manifest('2026-01-01T0001Z', INJECT_AT_2, logs2, ownCommit2, repo2), null, 2),
+      JSON.stringify(
+        manifest('2026-01-01T0001Z', INJECT_AT_2, logs2, ownCommit2, repo2),
+        null,
+        2,
+      ),
     );
     map['2026-01-01T0001Z'] = logs2;
   }
@@ -204,7 +274,11 @@ withFixture('a', { withForeignCommit: true, withStaleTrace: false }, (fx) => {
   expect(
     'A-foreign-commit',
     '源码面里有一个带同样答案签名的外来提交 → 判污染，且外来提交数 = 1',
-    { verdict: row.verdict, foreign: src.foreign_count, answering: src.answering_count },
+    {
+      verdict: row.verdict,
+      foreign: src.foreign_count,
+      answering: src.answering_count,
+    },
     { verdict: 'contaminated', foreign: 1, answering: 1 },
   );
 });
@@ -236,21 +310,69 @@ withFixture('c', { withForeignCommit: true, withStaleTrace: false }, (fx) => {
 });
 
 // ── 对照 D：日志面里的陈旧痕迹要被数出来 ──────────────────────────────────
-withFixture('d', { withForeignCommit: false, withStaleTrace: true, withSecondRound: true }, (fx) => {
+withFixture(
+  'd',
+  { withForeignCommit: false, withStaleTrace: true, withSecondRound: true },
+  (fx) => {
+    const audit = runAudit(fx);
+    const row = audit.rounds[0];
+    const chan = row.surfaces.find((s) => s.surface === 'logs_channel');
+    expect(
+      'D-stale-log-trace',
+      '日志面里早于注入时刻的痕迹行必须被数出来（时区换算没错）',
+      {
+        stale: chan.traces_before_injection,
+        total: chan.traces_total,
+        verdict: row.verdict,
+      },
+      { stale: 1, total: 2, verdict: 'contaminated' },
+    );
+    expect(
+      'D-clean-second-round',
+      '同一份夹具里的干净收尾轮 → 判独立（判据没有把所有人一律判污染）',
+      { verdict: audit.rounds[1].verdict },
+      { verdict: 'independent' },
+    );
+  },
+);
+
+// ── 对照 E：以**开跑时的实测**为准，不以事后重测为准 ──────────────────────
+withFixture(
+  'e',
+  {
+    withForeignCommit: false,
+    withStaleTrace: false,
+    withRecordedForeign: true,
+  },
+  (fx) => {
+    const audit = runAudit(fx);
+    const row = audit.rounds[0];
+    const src = row.surfaces.find((s) => s.surface === 'source_repo');
+    expect(
+      'E-recorded-surface-wins',
+      'manifest 记着开跑时源码面有 1 个外来提交（仓库现在已被下一轮清干净）→ 仍判污染：审计量的是「Agent 当时看到的那张面」',
+      { verdict: row.verdict, foreign: src.foreign_count, from: src.from },
+      {
+        verdict: 'contaminated',
+        foreign: 1,
+        from: 'manifest 记录的本轮实测（开跑时量的）',
+      },
+    );
+  },
+);
+
+// ── 对照 F：空目录不是干净目录 ────────────────────────────────────────────
+withFixture('f', { withForeignCommit: false, withStaleTrace: false }, (fx) => {
+  // 把日志面里的 .log 挪走，只留一个空目录：这就是「量不到」，不是「0 痕迹」。
+  rmSync(join(fx.logs1, 'all.log'));
   const audit = runAudit(fx);
   const row = audit.rounds[0];
   const chan = row.surfaces.find((s) => s.surface === 'logs_channel');
   expect(
-    'D-stale-log-trace',
-    '日志面里早于注入时刻的痕迹行必须被数出来（时区换算没错）',
-    { stale: chan.traces_before_injection, total: chan.traces_total, verdict: row.verdict },
-    { stale: 1, total: 2, verdict: 'contaminated' },
-  );
-  expect(
-    'D-clean-second-round',
-    '同一份夹具里的干净收尾轮 → 判独立（判据没有把所有人一律判污染）',
-    { verdict: audit.rounds[1].verdict },
-    { verdict: 'independent' },
+    'F-empty-dir-is-unknown',
+    '日志面目录在、但一个 .log 都没有 → 记 unknown（空面不得当成干净面）',
+    { status: chan.status, verdict: row.verdict },
+    { status: 'not_measured', verdict: 'unknown' },
   );
 });
 
