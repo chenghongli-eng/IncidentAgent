@@ -36,6 +36,30 @@ export function loadSpec(path) {
     throw new Error(`启动规格不存在：${path}`);
   }
   const spec = JSON.parse(readFileSync(path, 'utf8'));
+  /**
+   * 分相规格：每一相有自己的启动脚本、制品目录、运行目录。
+   *
+   * 为什么需要：运行时旋钮那一轮，基线态和故障态跑的是**同一个制品**，
+   * 差别只在进程环境里——一份扁平规格就够。发布类故障不一样：基线跑的是
+   * 上一个版本的制品，故障跑的是这一轮刚打出来的新制品，**是两个目录、
+   * 两个启动脚本**。一份扁平的规格表达不了这个差别。
+   *
+   * 顶层 launcher 取基线相：轮次编排开跑、摆基线时用的就是基线相，
+   * 故障相由轮次编排切过去。
+   */
+  if (spec.phases) {
+    for (const [name, phase] of Object.entries(spec.phases)) {
+      if (!phase?.launcher) {
+        throw new Error(`启动规格的 ${name} 相缺字段 launcher：${path}`);
+      }
+    }
+    if (!spec.phases.baseline) {
+      throw new Error(`分相启动规格缺 baseline 相：${path}`);
+    }
+    spec.launcher = spec.launcher ?? spec.phases.baseline.launcher;
+    spec.artifactDir = spec.artifactDir ?? spec.phases.baseline.artifactDir;
+    spec.runDir = spec.runDir ?? spec.phases.baseline.runDir;
+  }
   for (const key of ['launcher', 'port', 'healthPath']) {
     if (!spec[key]) throw new Error(`启动规格缺字段 ${key}：${path}`);
   }
