@@ -81,8 +81,10 @@ const {
   listenPid,
   healthStatus,
 } = await import(new URL('./real-target.mjs', import.meta.url).href);
-const { hostObservation, toLedgerEntry, processStartMs } = await import(
-  new URL('../collector/host-target.mjs', import.meta.url).href
+const { hostObservation, toLedgerEntry, processStartMs, treeIdentity } =
+  await import(new URL('../collector/host-target.mjs', import.meta.url).href);
+const { buildRelease, revertRelease } = await import(
+  new URL('./real-release.mjs', import.meta.url).href
 );
 const { readLedger, COMMIT_AUTHORITY } = await import(
   new URL('../collector/ledger.mjs', import.meta.url).href
@@ -161,7 +163,15 @@ const WS_JID = REAL_MODE
 let LAUNCH_SPEC = null;
 if (REAL_MODE) {
   // 启动规格以 lab-paths.json 为准（唯一真相源）：描述文件里可以不写。
-  LAUNCH_SPEC = loadSpec(LAB_PATHS.realLaunchSpec ?? PROFILE.launchSpec);
+  //
+  // 换故障机制时用 --launch-spec 换一份规格：规格里写着这一轮的旋钮，
+  // 它是答案键的一部分，所以永远在仓库外、也在 Agent 的工作区外。
+  const specOverride = opt('--launch-spec', null);
+  LAUNCH_SPEC = loadSpec(
+    specOverride
+      ? resolve(specOverride)
+      : (LAB_PATHS.realLaunchSpec ?? PROFILE.launchSpec),
+  );
   // 台账路径同样以 lab-paths.json 为准。
   PROFILE.ledgerPath = LAB_PATHS.realLedger;
 }
@@ -203,6 +213,68 @@ const SETTLE_MS = Number(
 
 const now = new Date();
 const STAMP = `${now.toISOString().slice(0, 10)}T${now.toISOString().slice(11, 16).replace(':', '')}Z`;
+
+/**
+ * 把规格里的 `{stamp}` 换成这一轮的时间戳。
+ *
+ * 为什么需要：发布类故障每一轮都要有一个**新的**部署单元目录与新的制品字节，
+ * 否则台账里的主键（制品 tree hash）两轮一样，读侧就分不出「这是又一次发布」，
+ * 样本就不独立了。展开发生在运行期，规格文件本身保持一份、不必每轮改写。
+ */
+function expandStamp(value) {
+  if (typeof value === 'string') return value.replaceAll('{stamp}', STAMP);
+  if (Array.isArray(value)) return value.map(expandStamp);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = expandStamp(v);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * 切到某一相的运行对象（启动脚本 / 制品目录 / 运行目录）。
+ *
+ * 发布类故障有两相：基线相跑上一个版本的制品，故障相跑这一轮新打出来的
+ * 制品。两相的**进程环境都是干净的**——故障在制品里，不在环境里。
+ */
+let CURRENT_PHASE = 'baseline';
+function usePhase(phase) {
+  const p = LAUNCH_SPEC.phases?.[phase];
+  if (!p) return false;
+  CURRENT_PHASE = phase;
+  LAUNCH_SPEC.launcher = p.launcher;
+  LAUNCH_SPEC.artifactDir = p.artifactDir;
+  LAUNCH_SPEC.runDir = p.runDir;
+  return true;
+}
+
+if (REAL_MODE) {
+  LAUNCH_SPEC.phases = expandStamp(LAUNCH_SPEC.phases ?? {});
+  LAUNCH_SPEC.faultEnv = expandStamp(LAUNCH_SPEC.faultEnv ?? {});
+  for (const key of ['launcher', 'artifactDir', 'runDir']) {
+    if (typeof LAUNCH_SPEC[key] === 'string') {
+      LAUNCH_SPEC[key] = expandStamp(LAUNCH_SPEC[key]);
+    }
+  }
+  usePhase('baseline');
+}
+
+/**
+ * 当前这一相该带什么进程环境。
+ *
+ * 基线相：把故障旋钮**显式抹掉**（编排脚本自己的环境可能带着它）。
+ * 故障相：带上发布单元的位置（启动脚本靠这两个变量知道跑哪个制品）。
+ */
+function phaseEnv() {
+  const env = { ...(LAUNCH_SPEC.baselineEnv ?? {}) };
+  if (CURRENT_PHASE === 'fault') {
+    Object.assign(env, LAUNCH_SPEC.faultEnv ?? {});
+  } else {
+    for (const key of Object.keys(LAUNCH_SPEC.faultEnv ?? {})) env[key] = null;
+  }
+  return env;
+}
 /**
  * 轮次产物落在哪。
  *
@@ -1230,6 +1302,260 @@ const REAL_SPEC = {
 };
 
 /**
+ * 真实靶子「发布类故障」的轮次规格。
+ *
+ * 与上一轮（运行时环境变量）**症状完全同形**：健康检查 503、5xx 比例超阈、
+ * HighServerErrorRate firing、同一串字节数。区别只在触发源：
+ *
+ *   上一轮：阈值在**进程环境**里（运行期旋钮），制品一行没动。
+ *   这一轮：阈值在**这次发布带进来的配置**里（写进打包进去的
+ *           application.yaml），运行期进程环境是干净的。
+ *
+ * 所以这一轮是上一轮的**镜像**：考的不是 Agent 会不会归因，而是归因的
+ * **方向**会不会跟着机制一起翻过来——上一轮里「发布」是排除项，
+ * 这一轮里「发布」就是触发源。
+ *
+ * 台子怎么摆：
+ *   基线相：跑**上一个版本**的制品（artifacts/651），健康。
+ *   故障相：现打一个新制品（配置里带上阈值），跑它，进程环境依旧干净。
+ *
+ * 台账怎么记：新制品的 tree hash 是**新的主键**，于是台账里多出一条
+ * 「发过版」的观测；它的 commit 由这次发布的那次提交给出
+ * （来源是构建记录，不是猜的）。这两样是 Agent 能看见的「发布发生过」。
+ */
+const REAL_RELEASE_SPEC = {
+  title: '真实靶子：新发布带进来的配置（健康检查的磁盘阈值）',
+
+  /**
+   * 窗口不变量：源码快照的 HEAD 必须老到不可能是这一轮的触发源。
+   *
+   * 这里的「变更」是**注入时**才产生的（这次发布），所以闸门这一刻能验的
+   * 只有「现在还没有变更」。发布提交建在基线提交上，与夹具那边 F2 的
+   * 那条判据是同一件事，方向相反而已。
+   */
+  async checkWindow() {
+    const head = mustSh(
+      `git -C ${LAB_PATHS.realRepoPath} log -1 --format='%h %aI %s'`,
+    ).out.trim();
+    const ageMin =
+      (Date.now() - new Date(head.split(' ')[1]).getTime()) / 60000;
+    if (ageMin < 15) {
+      fail(
+        `工作区源码快照 HEAD ${head} 只有 ${ageMin.toFixed(1)} 分钟前提交。\n` +
+          '这一轮的「发布」是注入时才发生的；闸门这一刻要看到的是一个干净的基线。',
+      );
+    }
+    record(
+      'P8',
+      true,
+      `工作区源码快照 HEAD 在窗口外（${ageMin.toFixed(0)} 分钟前）：${head}`,
+    );
+    return head;
+  },
+
+  /** 静默态：上一个版本的制品在跑，健康。 */
+  async setup() {
+    const status = await healthStatus(LAUNCH_SPEC);
+    if (status !== 200) {
+      fail(
+        `基线态的靶子不健康（/actuator/health = ${status}，期望 200）。台子不对，这一轮不开跑。`,
+      );
+    }
+    const pid = listenPid(LAUNCH_SPEC.port);
+    const startedMs = pid === null ? null : processStartMs(pid);
+    return {
+      note:
+        '基线态：上一个版本的制品在跑（代码、制品、运行期环境都干净，' +
+        '健康检查的磁盘阈值还是默认值）',
+      pid,
+      started_at: startedMs === null ? null : new Date(startedMs).toISOString(),
+      health_status: status,
+      changed: [],
+      unchanged: ['代码', '制品', '运行时环境'],
+    };
+  },
+
+  /** 静默态坐稳：与运行时旋钮那一轮同一件事——基线干净、告警不 firing。 */
+  async settle() {
+    if (!(await waitHealthyBaseline(120000))) {
+      fail(
+        `基线态 5xx 比例 120 秒内没回到 0（当前 ${await readRatio()}）。` +
+          '上一轮故障的残留没清干净，这一轮不开跑。',
+      );
+    }
+    const alerts = await json(`${PROM}/api/v1/alerts`);
+    const firing = (alerts.data?.alerts ?? []).filter(
+      (a) => a.labels?.alertname === 'HighServerErrorRate',
+    );
+    if (firing.length > 0) {
+      fail('基线态还有 HighServerErrorRate 在 firing——台子不干净。');
+    }
+    const until = Date.now() + SETTLE_MS;
+    const waitMs = until - Date.now();
+    if (waitMs > 0) {
+      log(`  静默态坐稳中：等 ${Math.ceil(waitMs / 1000)} 秒`);
+      await sleep(waitMs);
+    }
+    return {
+      settle_ms: SETTLE_MS,
+      waited_ms: Math.max(0, Math.round(waitMs)),
+      baseline_ratio: 0,
+      baseline_alert_firing: false,
+    };
+  },
+
+  /**
+   * 注入：打一个新发布出来，让它跑起来。
+   *
+   * 三步，顺序不能换：
+   *   1. 在源码快照里落一次提交（源码侧的样子）；
+   *   2. 从基线制品复制出新制品，把打包进去的那份配置改掉（制品侧的样子）；
+   *   3. 台账里先记下这个新制品的构建记录（digest + commit），
+   *      再起进程——起完再记观测。
+   *
+   * 第 3 步的两条是**同一次发布**的两面：先有构建记录（谁打的、什么时候打的），
+   * 后有部署观测（进程什么时候起的）。顺序反了，读侧会把「刚发过版」读成
+   * 「部署了一次旧版本」。
+   */
+  async inject() {
+    const rel = LAUNCH_SPEC.release;
+    if (!rel) {
+      fail('启动规格里没有 release 段（这一轮是发布类故障，但没有发布参数）。');
+    }
+    const unitDir = LAUNCH_SPEC.phases?.fault?.artifactDir;
+    if (!unitDir) {
+      fail(
+        '启动规格里没有 phases.fault.artifactDir——这一轮不知道该跑哪个制品。',
+      );
+    }
+
+    const built = buildRelease({
+      repo: rel.repo,
+      baseUnitDir: rel.baseUnitDir,
+      unitDir,
+      baseCommit: rel.baseCommit,
+      sourceFile: rel.sourceFile,
+      jarEntry: rel.jarEntry,
+      threshold: rel.threshold,
+      buildId: STAMP,
+      message: rel.message,
+    });
+    log(
+      `  新发布已构建：${built.commit_short}` +
+        `（制品 ${built.unitDir}，${built.jar_bytes} 字节，jar 条目 ${built.entries_before}→${built.entries_after}）`,
+    );
+
+    try {
+      // 构建记录：新主键（制品 tree hash）+ 这次发布的 commit。
+      const identity = treeIdentity(unitDir);
+      const buildRecord = toLedgerEntry(
+        {
+          image_ref: unitDir,
+          digest: identity.digest,
+          built_at: identity.built_at,
+          commit: built.commit,
+          commit_source: 'jenkins-build',
+          pod_started_at: null,
+          running_observed_at: null,
+          running_source: null,
+          observed_at: new Date().toISOString(),
+          evidence: 'ci-build-record',
+        },
+        { deployedBy: 'host' },
+      );
+      const written = writeEntries(PROFILE.ledgerPath, [buildRecord]);
+      if (written.conflicts.length > 0) {
+        fail(
+          `台账冲突：新制品的构建记录与既有记录互斥：${JSON.stringify(written.conflicts)}`,
+        );
+      }
+      log(
+        `  已记构建记录：${identity.digest} commit=${built.commit}（来源：构建记录）`,
+      );
+
+      // 切到故障相：起的是新制品，运行期环境依旧干净。
+      usePhase('fault');
+      const stopped = await stopTarget(LAUNCH_SPEC);
+      if (!stopped.stopped) {
+        fail(`停不掉基线态的靶子：${stopped.why}`);
+      }
+      startTarget(LAUNCH_SPEC, { env: phaseEnv() });
+      const ready = await waitReady(LAUNCH_SPEC, {
+        expectedStatus: 503,
+        timeoutMs: 300000,
+      });
+      if (!ready.ready) {
+        fail(
+          `注入后靶子没有进入故障态（/actuator/health 期望 503，实际 ${ready.status}）：${ready.why}\n` +
+            '  注入没生效就不跑 Agent——那会变成一轮「在没故障的台子上测诊断」。',
+        );
+      }
+      const observed = recordRealDeployment('fault');
+      return {
+        changed: ['制品', '发布提交'],
+        unchanged: ['运行期进程环境', '源码里的其他文件', '基线制品'],
+        probe: `注入后 /actuator/health = ${ready.status}`,
+        release_commit: built.commit,
+        release_unit: built.unitDir,
+        release_digest: identity.digest,
+        observed_digest: observed?.digest ?? null,
+        note: '阈值写进这次发布带进来的配置；运行期进程环境干净（没有对应的环境变量）',
+      };
+    } catch (err) {
+      // 发布已经打出来了，但这一轮没能跑起来。源码快照必须收回基线：
+      // 否则这一轮的阈值就留在工作区里，下一轮的泄漏扫描会在源码里看到它，
+      // 整轮被拦下——上一轮的答案漏进下一轮的证据面。
+      try {
+        revertRelease({ repo: rel.repo, baseCommit: rel.baseCommit });
+        log('  注入失败，源码快照已收回基线提交');
+      } catch (revertErr) {
+        fail(
+          `注入失败（${err.message}），而且源码快照收不回来：${revertErr.message}\n` +
+            '  源码里现在留着这一轮的改动，下一轮的泄漏扫描会拦下来——先手动收回基线。',
+        );
+      }
+      throw err;
+    }
+  },
+
+  /** 恢复：跑回上一个版本的制品，并把源码快照收回基线。 */
+  async restore() {
+    usePhase('baseline');
+    const stopped = await stopTarget(LAUNCH_SPEC);
+    if (!stopped.stopped) {
+      fail(`停不掉故障态的靶子：${stopped.why}`);
+    }
+    startTarget(LAUNCH_SPEC, { env: phaseEnv() });
+    const ready = await waitReady(LAUNCH_SPEC, {
+      expectedStatus: 200,
+      timeoutMs: 300000,
+    });
+    if (!ready.ready) {
+      fail(`恢复后靶子没回到健康态：${ready.why}`);
+    }
+    if (!(await waitHealthyBaseline(180000))) {
+      fail(
+        `恢复后 5xx 比例 180 秒内没回到 0（当前 ${await readRatio()}）。` +
+          '实验台不干净，下一轮不能直接开跑。',
+      );
+    }
+    // 源码快照收回基线：这一轮的发布提交不再出现在 git log 里，
+    // 下一轮不会看到上一轮发过什么。
+    const rel = LAUNCH_SPEC.release;
+    let reverted = null;
+    if (rel) {
+      reverted = revertRelease({ repo: rel.repo, baseCommit: rel.baseCommit });
+      log(`  源码快照已收回基线提交 ${reverted.head.slice(0, 8)}`);
+    }
+    return {
+      to: 'baseline',
+      probe: `恢复后 /actuator/health = ${ready.status}`,
+      source_reverted: reverted,
+    };
+  },
+};
+
+/**
  * 健康检查探针。
  *
  * 为什么需要它：5xx 比例这条告警的分子是「5xx 的请求数」。没有人打健康检查
@@ -1557,7 +1883,11 @@ async function main() {
   // 合成夹具那套注入（改源码 / 改旋钮 / 重建容器）在真实靶子上**不适用**：
   // 改源码就不叫真实项目了。所以两边的注入路径必须分开写，不能共用一套。
 
-  const spec = REAL_MODE ? REAL_SPEC : FAULTS[FAULT];
+  const spec = REAL_MODE
+    ? LAUNCH_SPEC.faultKind === 'release'
+      ? REAL_RELEASE_SPEC
+      : REAL_SPEC
+    : FAULTS[FAULT];
   if (!spec)
     fail(
       `还没实现的故障类型：${FAULT}。当前支持：${Object.keys(FAULTS).join(', ')}`,
@@ -2139,9 +2469,17 @@ async function main() {
   // 真值（答案键）。合成夹具的真值在仓库里（它是量具的一部分）；
   // 真实靶子的真值在**仓库外**——它写的是真实项目的故障机制，
   // 而仓库是公开的。
-  const truthPath = REAL_MODE
-    ? join(LAB_PATHS.realTruthDir, `${FAULT}.json`)
-    : join(RUNS, 'ground-truth', `${FAULT}.json`);
+  //
+  // `--truth` 可以指定另一个真值文件（绝对路径）。为什么需要它：
+  // 判据改版要先把新旧版本放在一起校准（正负对照），校准过的那一版
+  // 才是这一轮该用的。默认按故障编号取 `<FAULT>.json`，改版期间就用它
+  // 指到校准过的新版本上，不必去覆盖仓库外那份正在服役的真值。
+  const truthOverride = opt('--truth', null);
+  const truthPath = truthOverride
+    ? resolve(truthOverride)
+    : REAL_MODE
+      ? join(LAB_PATHS.realTruthDir, `${FAULT}.json`)
+      : join(RUNS, 'ground-truth', `${FAULT}.json`);
   if (!existsSync(truthPath)) fail(`找不到真值文件：${truthPath}`);
   const truth = JSON.parse(readFileSync(truthPath, 'utf8'));
   const score = scoreReport(readFileSync(REPORT_PATH, 'utf8'), truth, {

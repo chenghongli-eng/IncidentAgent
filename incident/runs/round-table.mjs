@@ -96,6 +96,49 @@ const manifests = readdirSync(RUNS)
   .filter((f) => f.startsWith('round-manifest-') && f.endsWith('.json'))
   .sort();
 
+/**
+ * 样本独立性审计：当场跑 `independence-audit.mjs`，读它的 JSON。
+ *
+ * 为什么指标表要吃这个：
+ *   通道审计只管「Agent 有没有越界」，管不了「这一轮的证据面上有没有前几轮
+ *   留下的痕迹」。真实靶子的日志目录跨轮累积，前一轮注入时打的阈值就躺在
+ *   日志里，后一轮的 Agent 读到了——那是**被提示过的命中**，样本不独立，
+ *   不能拿它当分母。
+ *
+ * 为什么当场跑、不读存下来的那份 JSON：
+ *   独立性是**日志面当下的状态**，不是一次性的判定。重打分会改写 manifest
+ *   （`score` 摘要），文件时间戳就变了——拿 mtime 当「审计是不是旧的」的
+ *   判据，会被重打分自己搞成假的。而最后一轮的面就是当前的日志目录，
+ *   之后再跑一轮，日志面就变了。
+ *   所以每次出表都重新量一遍：量不出来就不算数。
+ */
+function runIndependenceAudit() {
+  const r = spawnSync(
+    NODE,
+    [join(here, 'independence-audit.mjs'), RUNS, '--json'],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (r.status !== 0) {
+    process.stderr.write(
+      `样本独立性审计没跑成功（退出码 ${r.status}）：\n${r.stderr ?? ''}\n`,
+    );
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(r.stdout);
+  } catch (e) {
+    throw new Error(
+      `独立性审计的输出不是合法 JSON：${e.message}\n` +
+        '量不出独立性就不能出命中率——先修审计，再出表。',
+    );
+  }
+}
+
+const independence = runIndependenceAudit();
+const independenceByStamp = new Map(
+  (independence?.rounds ?? []).map((r) => [r.stamp, r]),
+);
+
 const rows = [];
 for (const f of manifests) {
   const m = JSON.parse(readFileSync(join(RUNS, f), 'utf8'));
@@ -152,18 +195,37 @@ for (const f of manifests) {
    * 所以这里补一条：**审计状态未知 = 这一轮不算数**。
    */
   const auditUnknown = !fresh && (!ca || ca.verdict === 'not_run');
+
+  /**
+   * 样本独立性：真实轮次必须有审计记录。
+   *
+   * 「审计里没有这一轮」按**未知**处理——未知不等于干净。夹具轮次
+   * （mode != descriptor）没有真实日志面，不适用这条判据。
+   */
+  const ind = independenceByStamp.get(m.stamp) ?? null;
+  const indUnknown = isReal && !ind;
+  const indContaminated = Boolean(ind && ind.independent === false);
+  const independenceProblem = indContaminated
+    ? `样本不独立：证据面上有 ${ind.traces_before_injection} 条早于本轮注入的痕迹`
+    : indUnknown
+      ? '样本独立性未知：独立性审计里没有这一轮'
+      : null;
+
   const valid =
     m.round_valid !== false &&
     !m.invalid_reason &&
     !contaminated &&
     !auditMismatch &&
     !auditUnknown &&
+    !independenceProblem &&
     ranAgent;
   rows.push({
     stamp: m.stamp,
     fault: m.fault,
     manifest: f,
     valid,
+    independent: ind ? ind.independent : null,
+    traces_before_injection: ind?.traces_before_injection ?? null,
     invalid_reason:
       m.invalid_reason ??
       auditMismatch ??
@@ -171,6 +233,7 @@ for (const f of manifests) {
       (auditUnknown
         ? '通道审计状态未知：transcript 解析不出来且审计未跑成'
         : null) ??
+      independenceProblem ??
       (ranAgent ? null : '未跑完（中止或 dry-run，没有报告）'),
     audit: ca?.verdict ?? 'not_run',
     contaminating: ca?.contaminating ?? null,
@@ -214,20 +277,26 @@ const yn = (v) => (v === null || v === undefined ? '—' : v ? '是' : '否');
 const pad = (s, n) => String(s).padEnd(n, ' ');
 
 console.log(
-  '\n| 轮次 | 故障 | 通道审计 | 有效 | 准确率 | 发布归因 | 质量判据 | rubric | manifest |',
+  '\n| 轮次 | 故障 | 通道审计 | 样本独立 | 有效 | 准确率 | 发布归因 | 质量判据 | rubric | manifest |',
 );
-console.log('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+console.log('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
 for (const r of rows) {
   const audit =
     r.audit === 'not_run'
       ? '未跑'
       : `${r.audit}（污染 ${r.contaminating ?? '?'} / 越界 ${r.out_of_surface ?? '?'}）`;
+  const ind =
+    r.independent === null
+      ? '—'
+      : r.independent
+        ? '是'
+        : `**否**（陈旧 ${r.traces_before_injection}）`;
   const dep =
     r.deployment === null
       ? '—'
       : `${r.deployment}${r.deployment_correct === 'correct' ? ' ✓' : r.deployment_correct === 'wrong' ? ' ✗' : ''}`;
   console.log(
-    `| ${r.stamp} | ${r.fault} | ${audit} | ${yn(r.valid)} | ` +
+    `| ${r.stamp} | ${r.fault} | ${audit} | ${ind} | ${yn(r.valid)} | ` +
       `${r.accuracy === null ? '—' : r.accuracy.toFixed(1)} | ${dep} | ${r.quality ?? '—'} | ` +
       `${r.rubric_version ?? '—'} | \`${r.manifest}\` |`,
   );
@@ -266,6 +335,13 @@ if (scored.length > 0) {
   console.log(`| --- | --- |`);
   console.log(`| 有效轮数（分母） | ${n} |`);
   console.log(`| 无效轮数（不计入分母） | ${invalid.length} |`);
+  const indScored = rows.filter((r) => r.independent !== null);
+  if (indScored.length) {
+    const indOk = indScored.filter((r) => r.independent).length;
+    console.log(
+      `| 样本独立性审计覆盖的轮次 | ${indOk}/${indScored.length} 独立（不独立的已剔出分母） |`,
+    );
+  }
   console.log(`| 根因命中（hit） | ${pct(tiers.hit)} |`);
   console.log(`| 根因部分命中（partial） | ${pct(tiers.partial)} |`);
   console.log(`| 根因未命中（miss） | ${pct(tiers.miss)} |`);

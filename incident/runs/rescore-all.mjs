@@ -15,17 +15,27 @@
  * 「报告 ↔ 真值」的配对从**旧分数文件**里读，不从文件名单独推断——
  * 配对错一次，整张表就错一次。
  *
+ * 扫哪个目录可以指定：真实靶子的轮次在**仓库外**
+ * （`~/incident-lab-archive/lab-data/rounds`，真值在 `~/incident-lab-archive/real-ground-truth/`）。
+ * 以前这个脚本只扫仓库内，于是「改了判据就全部重打」这条纪律
+ * **只覆盖了仓库那一半**——真实轮次那一半留在旧 rubric 下，
+ * 而指标表把两边的数并排放着，没人看得出来。
+ * 目录是参数：给了就扫那个目录，不给就扫仓库内。
+ *
  * 用法：
  *   node incident/runs/rescore-all.mjs --dry-run
  *   node incident/runs/rescore-all.mjs
+ *   node incident/runs/rescore-all.mjs /home/fs-user/incident-lab-archive/lab-data/rounds
  */
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const RUNS = resolve(dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = resolve(RUNS, '..', '..');
 const DRY_RUN = process.argv.includes('--dry-run');
+const DIR_ARG = process.argv.slice(2).find((a) => !a.startsWith('-'));
+const DIR = DIR_ARG ? resolve(DIR_ARG) : RUNS;
 
 const { scoreReport } = await import(
   new URL('./score-report.mjs', import.meta.url).href
@@ -33,7 +43,7 @@ const { scoreReport } = await import(
 
 /**
  * 旧分数文件里的路径有三种写法：
- *   1. 相对 incident/runs（`agent-report-….md`）——大多数轮次
+ *   1. 相对轮次目录（`agent-report-….md`）——大多数轮次
  *   2. 绝对路径（`/mnt/…/incident/runs/…`）——最近几轮
  *   3. `<repo>/incident/runs/…`——**脱敏过的**（11-03 那轮手工替换过）
  *
@@ -46,21 +56,27 @@ function resolveMaybe(p) {
   if (p.startsWith('<repo>/'))
     return join(REPO_ROOT, p.slice('<repo>/'.length));
   if (p.startsWith('/')) return p;
-  return join(RUNS, p);
+  return join(DIR, p);
 }
 
-const scoreFiles = readdirSync(RUNS)
+/** 存回分数文件里的路径写相对 DIR 的形式（仓库内那批仍是相对 incident/runs）。 */
+function relToDir(p) {
+  const r = relative(DIR, p);
+  return r.startsWith('..') ? p : r;
+}
+
+const scoreFiles = readdirSync(DIR)
   .filter((f) => /^score-\d{4}-\d{2}-\d{2}T\d{4}Z\.json$/.test(f))
   .sort();
 
 if (!scoreFiles.length) {
-  process.stderr.write('没有找到任何 score-<stamp>.json，先跑一轮再说。\n');
+  process.stderr.write(`没有找到任何 score-<stamp>.json（扫的是 ${DIR}）。\n`);
   process.exit(1);
 }
 
 const rows = [];
 for (const f of scoreFiles) {
-  const path = join(RUNS, f);
+  const path = join(DIR, f);
   const old = JSON.parse(readFileSync(path, 'utf8'));
   const stamp = f.replace(/^score-/, '').replace(/\.json$/, '');
 
@@ -77,9 +93,47 @@ for (const f of scoreFiles) {
 
   const truth = JSON.parse(readFileSync(truthPath, 'utf8'));
   const score = scoreReport(readFileSync(reportPath, 'utf8'), truth, {
-    reportPath: reportPath.replace(`${RUNS}/`, ''),
-    truthPath: truthPath.replace(`${RUNS}/`, ''),
+    reportPath: relToDir(reportPath),
+    truthPath: relToDir(truthPath),
   });
+
+  // 「变了」不只看准确率：质量判据（Q1–Q4）变了也得算变了。
+  // v9 只动 Q4 词表，准确率与发布归因一字未改——
+  // 只看前两项的话，这一轮会被报成「无变化」，而它的 Q4 其实翻了个个儿。
+  const qualitySig = (s) =>
+    JSON.stringify((s.quality ?? []).map((q) => [q.id, q.result]));
+  const changed =
+    old.root_cause_accuracy !== score.root_cause_accuracy ||
+    old.accuracy_tier !== score.accuracy_tier ||
+    old.deployment_attribution !== score.deployment_attribution ||
+    qualitySig(old) !== qualitySig(score);
+
+  // 同一个判据版本再跑一遍，结论一模一样：一个字节都不改。
+  //
+  // 为什么必须幂等：重打会往分数文件里写 `rescored_from`（记它是从哪一版
+  // 重打来的）。同一个版本重打两次，第二次就会把 `rescored_from` 从 v8 改成
+  // v9，文件内容变了——于是「归档已存在且内容不同」的护栏会在**第三次**
+  // 运行时误报：那不是有人改过这一轮，是这个脚本自己上一轮改的。
+  // 无变化就不归档、不写盘：护栏只在真的要归档时才该说话。
+  if (
+    !changed &&
+    (old.rubric_version ?? null) === (score.rubric_version ?? null)
+  ) {
+    rows.push({
+      stamp,
+      file: f,
+      archiveName: null,
+      changed: false,
+      qualityChanged: false,
+      old,
+      score,
+      manifest: null,
+      manifestPath: null,
+      skipped: true,
+    });
+    continue;
+  }
+
   score.rescored_from = {
     rubric_version: old.rubric_version ?? null,
     root_cause_accuracy: old.root_cause_accuracy ?? null,
@@ -91,7 +145,7 @@ for (const f of scoreFiles) {
   // 归档：旧文件原样保留，文件名带上旧版本号。
   const oldVersion = old.rubric_version ?? 'v0';
   const archiveName = `score-${stamp}.${oldVersion}.json`;
-  const archivePath = join(RUNS, archiveName);
+  const archivePath = join(DIR, archiveName);
   if (existsSync(archivePath)) {
     const archived = readFileSync(archivePath, 'utf8');
     if (archived !== readFileSync(path, 'utf8')) {
@@ -103,21 +157,17 @@ for (const f of scoreFiles) {
     }
   }
 
-  const manifestPath = join(RUNS, `round-manifest-${stamp}.json`);
+  const manifestPath = join(DIR, `round-manifest-${stamp}.json`);
   const manifest = existsSync(manifestPath)
     ? JSON.parse(readFileSync(manifestPath, 'utf8'))
     : null;
-
-  const changed =
-    old.root_cause_accuracy !== score.root_cause_accuracy ||
-    old.accuracy_tier !== score.accuracy_tier ||
-    old.deployment_attribution !== score.deployment_attribution;
 
   rows.push({
     stamp,
     file: f,
     archiveName,
     changed,
+    qualityChanged: qualitySig(old) !== qualitySig(score),
     old,
     score,
     manifest,
@@ -144,7 +194,8 @@ for (const f of scoreFiles) {
   }
 }
 
-console.log(`\nrubric：${rows[0]?.score.rubric_version ?? '—'}\n`);
+console.log(`\n扫的目录：${DIR}`);
+console.log(`rubric：${rows[0]?.score.rubric_version ?? '—'}\n`);
 console.log(
   '| 轮次 | 旧版本 | 旧分数 | 新分数 | 旧发布归因 | 新发布归因 | 变化 |',
 );
@@ -157,6 +208,9 @@ for (const r of rows) {
   );
 }
 const changedCount = rows.filter((r) => r.changed).length;
-console.log(`\n共 ${rows.length} 轮重打，${changedCount} 轮分数发生变化。`);
+const qualityChangedCount = rows.filter((r) => r.qualityChanged).length;
+console.log(
+  `\n共 ${rows.length} 轮重打，${changedCount} 轮发生变化（其中 ${qualityChangedCount} 轮是质量判据变了）。`,
+);
 if (DRY_RUN) console.log('（dry run，没有写任何文件）');
 console.log('');
