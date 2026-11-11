@@ -132,16 +132,20 @@ for (const f of scoreFiles) {
   // 只看前两项的话，这一轮会被报成「无变化」，而它的 Q4 其实翻了个个儿。
   const qualitySig = (s) =>
     JSON.stringify((s.quality ?? []).map((q) => [q.id, q.result]));
-  const changed =
+  // 分数本身变了（准确率、档位、发布归因、质量判据）。
+  const verdictChanged =
     old.root_cause_accuracy !== score.root_cause_accuracy ||
     old.accuracy_tier !== score.accuracy_tier ||
     old.deployment_attribution !== score.deployment_attribution ||
-    qualitySig(old) !== qualitySig(score) ||
-    // 换了真值文件也算「变了」：分数文件里记着用的是哪份判据，
-    // 只换判据不改分数的话，那一行会指着旧真值——口径就说不清了。
-    (truthOverrideApplies &&
-      old.ground_truth !== relToDir(truthPath) &&
-      old.ground_truth !== truthPath);
+    qualitySig(old) !== qualitySig(score);
+  // 分数文件里记的**真值口径**变了（换了真值文件，或换了默认路径）。
+  // 这不是「判定变了」：分数一模一样，只是那一行以前指着旧判据。仍要重写，
+  // 否则分数文件会一直写着「我用的是 v3」——但报成「变了」会让人以为结论动了。
+  const truthChanged =
+    truthOverrideApplies &&
+    old.ground_truth !== relToDir(truthPath) &&
+    old.ground_truth !== truthPath;
+  const changed = verdictChanged || truthChanged;
 
   // 同一个判据版本再跑一遍，结论一模一样：一个字节都不改。
   //
@@ -210,6 +214,8 @@ for (const f of scoreFiles) {
     file: f,
     archiveName,
     changed,
+    verdictChanged,
+    truthChanged,
     qualityChanged: qualitySig(old) !== qualitySig(score),
     old,
     score,
@@ -247,13 +253,17 @@ for (const r of rows) {
   console.log(
     `| ${r.stamp} | ${r.old.rubric_version} | ${r.old.root_cause_accuracy}（${r.old.accuracy_tier}） | ` +
       `${r.score.root_cause_accuracy}（${r.score.accuracy_tier}） | ${r.old.deployment_attribution} | ` +
-      `${r.score.deployment_attribution} | ${r.changed ? '**变了**' : '无'} |`,
+      `${r.score.deployment_attribution} | ${
+        r.verdictChanged ? '**判定变了**' : r.truthChanged ? '真值口径变' : '无'
+      } |`,
   );
 }
-const changedCount = rows.filter((r) => r.changed).length;
+const verdictCount = rows.filter((r) => r.verdictChanged).length;
+const truthCount = rows.filter((r) => r.truthChanged).length;
 const qualityChangedCount = rows.filter((r) => r.qualityChanged).length;
 console.log(
-  `\n共 ${rows.length} 轮重打，${changedCount} 轮发生变化（其中 ${qualityChangedCount} 轮是质量判据变了）。`,
+  `\n共 ${rows.length} 轮重打：判定变了 ${verdictCount} 轮（其中 ${qualityChangedCount} 轮是质量判据变了），` +
+    `只有真值口径变 ${truthCount} 轮（分数没动，只是分数文件改记当前判据）。`,
 );
 if (DRY_RUN) console.log('（dry run，没有写任何文件）');
 console.log('');
