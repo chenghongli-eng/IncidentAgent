@@ -77,8 +77,13 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
-const { scoreReport, extractSections, scoreAccuracy, scoreDeployment } =
-  await import(new URL('./score-report.mjs', import.meta.url).href);
+const {
+  scoreReport,
+  extractSections,
+  scoreAccuracy,
+  scoreDeployment,
+  runCheck,
+} = await import(new URL('./score-report.mjs', import.meta.url).href);
 
 const SYMPTOM_ONLY = `# target-service 5xx 故障诊断报告
 
@@ -402,6 +407,122 @@ function dropEnumerators(report) {
 }
 
 /**
+ * v8 手术 A：把字段名换成**同义写法**，内容一个字不动。
+ *
+ * 真实靶子 2026-11-11T0150Z 那轮就是这么写的：
+ *   「### 主假设（触发源，置信度 高）」代替「根因假设」
+ *   「### 证据缺口（诚实声明）」代替「反对证据 / 尚未解释」
+ * 语义对得上，名字不是契约里的那六个——v7 只认契约名，
+ * 于是 root_cause 与 against 两节都切不出来，判据 NO_SECTION、整轮 0.0，
+ * 而那份报告的诊断内容是对的。
+ *
+ * 分数必须与带编号那份**完全一致**：证明 v8 认的是「字段在不在」，
+ * 不是「字段名是不是契约里那六个字」。
+ */
+function renameFieldsToAliases(report) {
+  return replaceAllChecked(report, [
+    ['### 二、根因假设', '### 主假设（触发源，置信度 高）'],
+    ['**支持证据**', '### 支持证据'],
+    ['**反对证据 / 尚未解释**', '### 证据缺口（诚实声明）'],
+    ['### 三、已排除的假设', '### 已排除的假设（附排除依据）'],
+    ['### 四、跳过的步骤及原因', '### 跳过的步骤及原因'],
+  ]);
+}
+
+/**
+ * v8 负对照 A：把根因节的标题换成**排除项**的名字。
+ *
+ * 报告里唯一一个带「假设」二字的标题变成了「已排除的假设」——
+ * 如果别名匹配写得太松（拿「假设」当别名，而不是「主假设」），
+ * root_cause 就会把排除项那一节抢过来，把排除理由当成根因判据的证据。
+ *
+ * root_cause 必须仍然是 NO_SECTION，excluded 必须照常找到。
+ */
+function renameRootCauseToExcluded(report) {
+  return replaceOnce(
+    report,
+    '### 主假设（触发源，置信度 高）',
+    '### 已排除的假设（附排除依据）',
+  );
+}
+
+/**
+ * v8 负对照 B：把根因节的标题换成**不承载字段的标题**。
+ *
+ * 「主假设」两个字还在正文里（还在同一节里），但节标题没了 →
+ * root_cause 必须 NO_SECTION。证明别名只在**标题**上认，
+ * 正文里随口一句「主假设」不算数。
+ */
+function renameRootCauseToPlainHeading(report) {
+  return replaceOnce(report, '### 主假设（触发源，置信度 高）', '### 诊断结论');
+}
+
+/**
+ * v9 的报告骨架：字段名、机制、排除项都固定，只有「反对证据」那一节待替换。
+ *
+ * 反对证据那一节是**同一个字段的两种内容**：
+ *   · 一份真的列了反例（「读不到」「只能证明」「不构成」）
+ *   · 一份只把排除项复述了一遍
+ * 两份结构完全一样，差的是内容——这才是「列了反对证据」与「列了排除项」的差别。
+ */
+const AGAINST_SKELETON = `# target-service 5xx 故障诊断报告
+
+### 三个锚点
+
+| 锚点 | 时间 |
+|---|---|
+| 告警起始 | 2026-11-04T03:42:04Z |
+| 异常首次出现 | 2026-11-04T03:41:43Z |
+| 最近一次容器重建 | 2026-11-04T03:41:38Z |
+
+### 根因假设
+
+**机制**：运行时把下游读超时压到 1 ms（\`DOWNSTREAM_TIMEOUT_MS\` 由 2000 ms 调成 1 ms，容器重建后生效）→ Read timed out → fetchProfile 返回 null → OrderService.loadOrder 没有判空兜底 → NullPointerException → HTTP 500。
+
+- **触发源（配置层）**：运行时把下游读超时压到 1 ms（超时旋钮 DOWNSTREAM_TIMEOUT_MS=1）。
+- **必要条件（缺陷层）**：commit 852d339 删除了 OrderService.loadOrder 的判空兜底。
+- **放大条件**：订单端点与负载探针共用同一条被压到 1 ms 的出站路径。
+
+### 反对证据 / 尚未解释
+
+@@AGAINST@@
+
+### 已排除的假设及排除依据
+
+- **资源类**：排除。5xx 是台阶不是缓慢增长。
+- **依赖宕机**：排除。db / redis / ping 均 UP。
+- **流量激增**：排除。请求速率故障前后一致。
+- **最近一次发布**：排除（必要条件，不是触发源）。发布 852d339 删了判空兜底，触发源是运行时旋钮那次改动。
+`;
+
+/**
+ * v9 正对照：反对证据那一节**真的列了反例**。
+ *
+ * 措辞是真实轮次里出现过的写法：「读不到」「只能证明」「不构成」「无因果贡献」——
+ * 它们在旧词表（未解释|尚未解释|无法|未能|缺口|存疑|不完整）里一个都不沾，
+ * 于是旧 rubric 把「列了三条真反例」判成 FAIL。
+ */
+const AGAINST_WITH_COUNTER_EVIDENCE = `1. 旋钮文件在 03:24:53 被编辑，但该窗口 NPE 0 次、5xx 比例序列不存在 ⇒ 配置层无因果贡献；这次编辑的具体内容读不到，只能证明它未造成本故障。
+2. \`profile lookup failed\` 的 ERROR 在故障前已每 4 秒一条，是长期噪音；它不构成本次根因（404 速率故障前后完全一致）。
+3. 5xx 比例观测到 9.9% 的瞬时高点略高于 8.5% 平台值，归因于 1m 窗口边界与流量抖动。`;
+
+/**
+ * v9 负对照：同一节、同样三条，但只是把排除项复述了一遍。
+ *
+ * 里面既没有反例，也没有未解释项——「列了三条」不等于「列了反对证据」。
+ * 这一条必须 FAIL：否则 v9 的词表就成了一张空白支票。
+ */
+const AGAINST_WITH_EXCLUSIONS_ONLY = `1. 资源类：已排除。
+2. 依赖宕机：已排除。
+3. 流量激增：已排除。`;
+
+function withAgainstSection(content) {
+  const out = AGAINST_SKELETON.replace('@@AGAINST@@', content);
+  if (out.includes('@@AGAINST@@')) throw new Error('反对证据那一节没替换上');
+  return out;
+}
+
+/**
  * v7 负对照 A：把结构全拆掉，只剩同样字句的散文。
  *
  * 标题的编号去掉（标题行本身也去掉）、加粗小标题行也去掉。
@@ -650,6 +771,76 @@ const CASES = [
     expect_criteria: { 'F4-C1': 'NO_SECTION' },
     expect_absent: { section: 'against', pattern: '尚未解释' },
   },
+  {
+    name: '字段名换成同义写法（v8 正对照 A：v7 只认契约名，会判 0.0）',
+    report: null,
+    inline: NUMBERED_HEADINGS_REPORT,
+    mutate: renameFieldsToAliases,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 1.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'PASS', 'F4-C2': 'PASS' },
+    expect_deployment_checks: { 'F4-D1': 'PASS', 'F4-D2': 'FAIL' },
+    expect_quality: { Q3: 'PASS', Q4: 'PASS' },
+    // 同义写法必须真的换掉了：否则这一条考的是「本来就能过的那份」。
+    expect_present: {
+      section: 'whole',
+      pattern: '### 主假设（触发源，置信度 高）',
+    },
+    expect_absent: { section: 'whole', pattern: '### 二、根因假设' },
+  },
+  {
+    name: '唯一带「假设」的标题变成排除项（v8 负对照 A：root_cause 不能被抢走）',
+    report: null,
+    inline: NUMBERED_HEADINGS_REPORT,
+    mutate: (r) => renameRootCauseToExcluded(renameFieldsToAliases(r)),
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'NO_SECTION' },
+    expect_quality: { Q3: 'PASS' },
+    // 排除项那一节必须照样找得到（没被 root_cause 抢走，也没整节丢掉）；
+    // root_cause 必须仍然是空的。
+    expect_present: { section: 'excluded', pattern: '触发源' },
+    expect_absent: { section: 'root_cause', pattern: '触发源' },
+  },
+  {
+    name: '根因节标题换成普通标题（v8 负对照 B：别名只在标题上认）',
+    report: null,
+    inline: NUMBERED_HEADINGS_REPORT,
+    mutate: (r) => renameRootCauseToPlainHeading(renameFieldsToAliases(r)),
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'NO_SECTION' },
+    expect_quality: { Q3: 'PASS' },
+  },
+  {
+    name: '反对证据那一节真的列了反例（v9 正对照：旧词表判 FAIL）',
+    report: null,
+    inline: withAgainstSection(AGAINST_WITH_COUNTER_EVIDENCE),
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 1.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'PASS', 'F4-C2': 'PASS' },
+    expect_quality: { Q3: 'PASS', Q4: 'PASS' },
+    // 反例的措辞必须在 against 节里：否则这一条考的是「本来就能过的那份」。
+    expect_present: {
+      section: 'against',
+      pattern: '读不到|只能证明|不构成|无因果贡献',
+    },
+    // 旧词表里的词一个都不许有：只有这样，v9 才是这条校准的鉴别点。
+    expect_absent: {
+      section: 'against',
+      pattern: '未解释|尚未解释|无法|未能|缺口|存疑|不完整',
+    },
+  },
+  {
+    name: '反对证据那一节只复述了排除项（v9 负对照：列了三条不等于列了反例）',
+    report: null,
+    inline: withAgainstSection(AGAINST_WITH_EXCLUSIONS_ONLY),
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 1.0, deployment: 'excluded', correct: 'correct' },
+    expect_criteria: { 'F4-C1': 'PASS', 'F4-C2': 'PASS' },
+    expect_quality: { Q3: 'PASS', Q4: 'FAIL' },
+    expect_present: { section: 'against', pattern: '已排除' },
+  },
 ];
 
 let failures = 0;
@@ -684,6 +875,18 @@ for (const c of CASES) {
   }
   for (const [id, want] of Object.entries(c.expect_deployment_checks ?? {})) {
     const got = deployment.checks.find((r) => r.id === id)?.result;
+    if (got !== want)
+      critProblems.push(`${id} 判成 ${got ?? '（缺该判据）'}，期望 ${want}`);
+  }
+  // 质量判据（Q1–Q4）以前从不被校准——它们只进指标表，
+  // 于是「切段认不出来」这件事在质量维度上是隐形的。v8 起纳入断言。
+  for (const [id, want] of Object.entries(c.expect_quality ?? {})) {
+    const spec = (truth.quality ?? []).find((q) => q.id === id);
+    if (!spec) {
+      critProblems.push(`真值里没有 ${id} 这条质量判据`);
+      continue;
+    }
+    const got = runCheck(spec, sections).result;
     if (got !== want)
       critProblems.push(`${id} 判成 ${got ?? '（缺该判据）'}，期望 ${want}`);
   }

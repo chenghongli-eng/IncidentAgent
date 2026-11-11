@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-26T0222Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v7",
+  "rubric_version": "v9",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…rry-pick / 自动化回灌**，但 git 历史里没有操作者意图记录，**无法证实**。这是本报告最大的未解释项，也正是\"第三次复发\"的风险点。 - **`e…"
+      "evidence": "…- **`17ae5df` 为何被产生，无证据**。它与 `0d6d0d4` 字节级相同、commit body 同样写着 `…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v6",
+    "rubric_version": "v9",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

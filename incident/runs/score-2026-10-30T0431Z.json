@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0431Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v7",
+  "rubric_version": "v9",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…在 04:31:54.196Z 被改写解释；knob 文件的历史版本不可读，无法给出该值被改为 1ms 的确切时刻。 - 03:51 / 03:57 / 0…"
+      "evidence": "…件 在 04:31:54.196Z 被改写解释；knob 文件的历史版本不可读，无法给出该值被改为 1ms 的确切时刻。 - 03:51 / 03:57…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v6",
+    "rubric_version": "v9",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

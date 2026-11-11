@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-04T0754Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v7",
+  "rubric_version": "v9",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -78,7 +78,7 @@
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v6",
+    "rubric_version": "v9",
     "root_cause_accuracy": 0,
     "accuracy_tier": "miss",
     "deployment_attribution": "unclear",

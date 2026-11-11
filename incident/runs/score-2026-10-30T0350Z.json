@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0350Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v7",
+  "rubric_version": "v9",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…验证\"把超时调回 2000ms 即可恢复\"** —— 本 Agent 无写权限，无法做因果验证实验。该动作列为处置建议草案。…"
+      "evidence": "…外部探针**而非负载驱动。这属于 F2 潜伏路径的触发者，不影响本次根因，但来源未定位。 3. **旋钮文件的变更人与变更意图未知**：文件 mtime 只给出\"何时…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v6",
+    "rubric_version": "v9",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

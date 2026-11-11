@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-02T0702Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v7",
+  "rubric_version": "v9",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "markdown-heading",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…/ 尚未解释 1. **本次之前已有一模一样的故障（06:48:53.346Z）**：同栈…"
+      "evidence": "…的容器重建之后，而当时仓库 HEAD 仍是 `7bb726a`（有防护）。**未被本次证据完全解释**：可能是更早的镜像/更早的提交被上线过（reflog 只有一次 commit…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v6",
+    "rubric_version": "v9",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

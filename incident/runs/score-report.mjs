@@ -168,7 +168,7 @@ import { pathToFileURL } from 'node:url';
  *   改完必须过 `calibrate-scorer.mjs`（人工审计过的案例，一个都不能变），
  *   并且 `rescore-all.mjs` 全量重打 + 归档 v6 快照。
  */
-const RUBRIC_VERSION = 'v7';
+const RUBRIC_VERSION = 'v9';
 
 /**
  * 报告契约的固定字段。
@@ -192,13 +192,32 @@ const RUBRIC_VERSION = 'v7';
  *   · 标题认**编号前缀**（`### 四、根因假设`）。
  *   · 字段名还可以写成**独立成行的加粗小标题**（`**反对证据 / 尚未解释**`）。
  * 三种写法认的是同一件事：字段名在哪儿，内容就在它下面。
+ *
+ * v8 再加一种，还是同一个毛病（第四次）：字段名**同义写法**。
+ * 2026-11-11T0150Z 那轮把根因写成「### 主假设（触发源，置信度 高）」、
+ * 把反对证据写成「### 证据缺口（诚实声明）」——语义对得上，名字不是契约里的那六个。
+ * 切段器只认契约名 → root_cause 与 against 两节都切不出来 → 判据 NO_SECTION → 0 分。
+ * 那一轮的诊断内容（阈值 50GB → diskSpace DOWN → 503 → 5xx → 告警）是对的。
+ *
+ * 别名表按「证据优先」原则定：只收语料里真实出现过的同义写法，
+ * 契约名排第一，同义写法按出现顺序排；匹配时契约名优先。
+ *
+ *   root_cause：根因假设 / 主假设（11-11）/ 根因判断（11-10T0949Z）
+ *   against：反对证据 / 证据缺口（10-27、11-11）
+ *
+ * 收敛得很紧：只认**前缀**，`主假设` 不认 `假设`——
+ * 否则 `### 已排除的假设` 会被 root_cause 抢走（那节是排除项，不是根因）。
  */
 const SECTION_MARKERS = [
-  { name: 'root_cause', label: '【根因假设】', heading: '根因假设' },
-  { name: 'support', label: '【支持证据】', heading: '支持证据' },
-  { name: 'against', label: '【反对证据', heading: '反对证据' },
-  { name: 'excluded', label: '【已排除的假设', heading: '已排除的假设' },
-  { name: 'skipped', label: '【跳过的步骤', heading: '跳过的步骤' },
+  {
+    name: 'root_cause',
+    label: '【根因假设】',
+    headings: ['根因假设', '主假设', '根因判断'],
+  },
+  { name: 'support', label: '【支持证据】', headings: ['支持证据'] },
+  { name: 'against', label: '【反对证据', headings: ['反对证据', '证据缺口'] },
+  { name: 'excluded', label: '【已排除的假设', headings: ['已排除的假设'] },
+  { name: 'skipped', label: '【跳过的步骤', headings: ['跳过的步骤'] },
 ];
 
 /** 只当分界、不单独成节的字段。 */
@@ -236,22 +255,30 @@ function stripEnumerator(text) {
  * 找第一个「以 prefix 开头」的 markdown 标题行。
  *
  * 代码围栏里的行不算标题——处置建议块里的 `# 1) 回滚…` 是注释。
+ *
+ * prefixes 是一个**有序**列表（契约名在前，同义写法在后）：
+ * 按列表顺序逐个找，命中的第一个就是结果——契约名优先于同义写法。
  */
-function headingIndex(lines, prefix) {
-  const target = stripEnumerator(normalizeHeading(prefix));
-  let inFence = false;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (/^\s*```/.test(line)) {
-      inFence = !inFence;
-      continue;
+function headingIndex(lines, prefixes) {
+  const list = Array.isArray(prefixes) ? prefixes : [prefixes];
+  for (const prefix of list) {
+    const target = stripEnumerator(normalizeHeading(prefix));
+    let inFence = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) continue;
+      const m = line.match(/^\s{0,3}#{1,6}\s+(.*)$/);
+      if (!m) continue;
+      if (stripEnumerator(normalizeHeading(m[1])).startsWith(target)) {
+        return { index: i, prefix };
+      }
     }
-    if (inFence) continue;
-    const m = line.match(/^\s{0,3}#{1,6}\s+(.*)$/);
-    if (!m) continue;
-    if (stripEnumerator(normalizeHeading(m[1])).startsWith(target)) return i;
   }
-  return -1;
+  return null;
 }
 
 /**
@@ -268,16 +295,19 @@ function headingIndex(lines, prefix) {
  *
  * 返回 {index, rest}：rest 是标签后面那半句内容（没有就是空串）。
  */
-function boldLabelIndex(lines, prefix) {
-  const target = stripEnumerator(normalizeHeading(prefix));
-  for (let i = 0; i < lines.length; i += 1) {
-    const m = lines[i]
-      .trim()
-      .match(/^(?:\*\*|__)\s*(.+?)\s*(?:\*\*|__)\s*(?:[:：]\s*(.*))?$/);
-    if (!m) continue;
-    const label = stripEnumerator(normalizeHeading(m[1]));
-    if (label.startsWith(target))
-      return { index: i, rest: (m[2] ?? '').trim() };
+function boldLabelIndex(lines, prefixes) {
+  const list = Array.isArray(prefixes) ? prefixes : [prefixes];
+  for (const prefix of list) {
+    const target = stripEnumerator(normalizeHeading(prefix));
+    for (let i = 0; i < lines.length; i += 1) {
+      const m = lines[i]
+        .trim()
+        .match(/^(?:\*\*|__)\s*(.+?)\s*(?:\*\*|__)\s*(?:[:：]\s*(.*))?$/);
+      if (!m) continue;
+      const label = stripEnumerator(normalizeHeading(m[1]));
+      if (label.startsWith(target))
+        return { index: i, rest: (m[2] ?? '').trim(), prefix };
+    }
   }
   return null;
 }
@@ -299,12 +329,25 @@ function contractMarkerRest(line, label) {
  * markdown 标题那一行里，**字段名之外**还剩什么。
  *
  * 例：`### 四、根因假设` → 空串；`## 根因假设（置信度 0.9）` → `（置信度 0.9）`。
+ *
+ * 返回值还要过一道闸：**带冒号的才算正文**，其余算标题。
+ *
+ * 为什么：契约字段名本身叫「反对证据 / 尚未解释」，
+ * 于是 `## 反对证据 / 尚未解释` 这个**标题**里就带着「尚未解释」四个字。
+ * 把它算进本节正文，Q4（认「尚未解释」）就白拿一次命中——
+ * 字段名满足了它自己那条判据。v7 修过契约标记与加粗小标题两条路径，
+ * 标题这条路径漏了。
+ *
+ * 冒号那条闸是为了不误伤真内容：Agent 有时把正文直接写在标题行上，
+ * `### 根因假设：运行时把超时压到 1 ms` —— 冒号后面的部分是正文，得留。
+ * 括号注释、斜杠副标题（`（置信度 0.9）`、`/ 尚未解释`）是标题的修饰，不算正文。
  */
 function headingRest(line, name) {
   const raw = line.replace(/^\s{0,3}#{1,6}\s*/, '');
   const i = raw.indexOf(name);
   if (i < 0) return '';
-  return raw.slice(i + name.length).trim();
+  const rest = raw.slice(i + name.length).trim();
+  return /[：:]/.test(rest) ? rest : '';
 }
 
 function extractSections(text) {
@@ -324,15 +367,15 @@ function extractSections(text) {
         rest: contractMarkerRest(lines[byMarker], m.label),
       };
     }
-    const byHeading = headingIndex(lines, m.heading);
-    if (byHeading >= 0) {
+    const byHeading = headingIndex(lines, m.headings);
+    if (byHeading) {
       styles[m.name] = 'markdown-heading';
       return {
-        index: byHeading,
-        rest: headingRest(lines[byHeading], m.heading),
+        index: byHeading.index,
+        rest: headingRest(lines[byHeading.index], byHeading.prefix),
       };
     }
-    const byLabel = boldLabelIndex(lines, m.heading);
+    const byLabel = boldLabelIndex(lines, m.headings);
     if (byLabel) {
       styles[m.name] = 'bold-label';
       return { index: byLabel.index, rest: byLabel.rest };
@@ -344,7 +387,7 @@ function extractSections(text) {
   const bounds = [
     ...starts.map((s) => s.index),
     ...BOUNDARY_LABELS.map(firstAt),
-    ...BOUNDARY_HEADINGS.map((h) => headingIndex(lines, h)),
+    ...BOUNDARY_HEADINGS.map((h) => headingIndex(lines, h)?.index ?? -1),
   ].filter((i) => i >= 0);
 
   for (const { m, index: start, rest } of starts) {

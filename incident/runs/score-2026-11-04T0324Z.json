@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-04T0324Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v7",
+  "rubric_version": "v9",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -71,12 +71,12 @@
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
       "result": "PASS",
-      "evidence": "…暴露；但 10-30 的 7bb726a 兜底为何在 11-03 未生效无法用 git 解释（当天无对应 unguard 提交），推测镜像构建版本不同，需查…"
+      "evidence": "…暴露；但 10-30 的 7bb726a 兜底为何在 11-03 未生效无法用 git 解释（当天无对应 unguard 提交），推测镜像构建版本不同，需查当时镜像 tag…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v6",
+    "rubric_version": "v9",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "excluded",

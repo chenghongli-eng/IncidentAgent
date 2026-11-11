@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-03T0324Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v7",
+  "rubric_version": "v9",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "contract-marker",
@@ -70,13 +70,13 @@
       "id": "Q4",
       "name": "列出反对证据 / 尚未解释项",
       "scope": "against",
-      "result": "FAIL",
-      "evidence": null
+      "result": "PASS",
+      "evidence": "…容器重启，但该窗口 NPE 0 次、 5xx 比例序列不存在 ⇒ 配置层无因果贡献。03:24 那次编辑的具体内容读不到 （actuator 全掩码；工作…"
     }
   ],
   "needs_review": [],
   "rescored_from": {
-    "rubric_version": "v6",
+    "rubric_version": "v9",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",
