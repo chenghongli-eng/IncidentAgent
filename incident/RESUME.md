@@ -1,6 +1,90 @@
 # IncidentAgent — 断点存档
 
-最后更新：2026-11-12 晚（① R2 判据改到 v5：抽查证明**那 2 个 partial + 1 个 miss 是量具的锅**，重打分后独立样本命中 5/5；② R1 判据查出一张**空白支票**：方向反的报告也能拿 hit，判据改到 v2；③ 用同一把尺子量 R2-v5，又量出一张同类空白支票（否定词表缺「未」），判据改到 v6，对真实轮次零影响）。本文件是**唯一下次会话的入口**，先读它再动手。
+最后更新：2026-11-12 晚（① R2 判据改到 v5：抽查证明**那 2 个 partial + 1 个 miss 是量具的锅**，重打分后独立样本命中 5/5；② R1 判据查出一张**空白支票**：方向反的报告也能拿 hit，判据改到 v2；③ 用同一把尺子量 R2-v5，又量出一张同类空白支票（否定词表缺「未」），判据改到 v6，对真实轮次零影响；④ R1 批次 5/5 跑完，但**独立性审计判出 5 轮全污染**——源码快照里躺着 R2 批次留下的注入提交；台子已补闸门，明天重跑）。本文件是**唯一下次会话的入口**，先读它再动手。
+
+---
+
+## 【2026-11-12 晚·其四】R1 批次跑完 5/5，但**五轮全判污染**：源码快照里躺着上一批的答案
+
+一句话：**R1 五轮（0707Z/0733Z/0745Z/0804Z/0817Z）全部跑完、exit=0、R1-v2 重打分
+5/5 hit + 发布归因 excluded；但独立性审计把它们**全判成污染**——发布类批次留下的
+注入提交 `aa7ecb6`（「chore(config): 调整健康检查的磁盘空间阈值」）还留在共用的源码
+快照里，`git reflog` 直接看得见它。**台子已补闸门，这五轮不能当作独立样本用，明天重跑。
+
+### 一、R1-v2 重打分（23 轮，判定变 1 轮）
+
+| 轮次      | v1 真值     | R1-v2     | 说明                                                             |
+| --------- | ----------- | --------- | ---------------------------------------------------------------- |
+| 0804Z     | 0.5 partial | **1 hit** | 空间环节写成「只剩 21.8GB 可用」，v1 词表收不到；v2 补的写法命中 |
+| 其余 4 轮 | hit         | hit       | 无变化                                                           |
+
+重打分命令（旧分数自动归档为 `*.v9.R1.json`）：
+
+```bash
+node incident/runs/rescore-all.mjs ~/incident-lab-archive/lab-data/rounds \
+  --truth ~/incident-lab-archive/real-ground-truth/R1.v2.json --only-fault R1
+```
+
+### 二、渠道审计：两轮 `out_of_surface`，**都是真越界**（先前怀疑的假阳性不成立）
+
+- 0707Z：2 处，`curl -s http://127.0.0.1:9094/api/v1/rules` 与 `.../api/v1/alerts`，
+  直接打 Prometheus API，绕过只读工具。
+- 0817Z：1 处，命令前半截用的是只读工具，**后半截接了一条
+  `curl -s http://127.0.0.1:9094/api/v1/rules | head -c 3000`**——从 transcript 原文
+  核实，是真实的越界，不是 `channel-audit.mjs` 的 `/\b(curl|wget)\b/` 过了头。
+  （我中途怀疑是量具假阳性，查了原文，**怀疑错了**，记在这里免得下次重犯。）
+
+### 三、独立性审计：补录后 5/5 量到 → 5 轮全污染
+
+R1 的注入路径**当时没记** `evidence_surface` 与 `source_surface`，所以审计只量到 3/5
+（通道、台账、指标三面），判「未知」。用补录把另外两面补上：
+
+```bash
+# 补录文件在仓库外：/home/fs-user/incident-lab-archive/lab-data/rounds/surface-map-r1.json
+# { "2026-11-12T0707Z": "same-as-channel", ... }（五轮全是 same-as-channel）
+node incident/runs/independence-audit.mjs ~/incident-lab-archive/lab-data/rounds \
+  --surface-map ~/incident-lab-archive/lab-data/rounds/surface-map-r1.json \
+  --source-repo /mnt/my-work/incident-lab/workspace-real/repo \
+  --pristine-repo <原始仓库：源码快照 origin 指向的那份，路径不写进仓库>
+```
+
+结果：五面全部量到（5/5），**每一轮都是污染**——源码面外来提交 1 个：
+
+| 项         | 值                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------- |
+| sha        | `aa7ecb60629e78dd5ae0e35533873726019a6e9d`                                         |
+| 提交时间   | 2026-11-12T03:57:35Z（= R2 批次 0351Z 那一轮）                                     |
+| message    | `chore(config): 调整健康检查的磁盘空间阈值`                                        |
+| 改动       | 某服务的 `application.yaml` 加 `management.health.diskspace.threshold: 50GB`       |
+| 可达性     | 无 ref 指向，**但在 `git reflog` 里可见**（`HEAD@{...} commit: chore(config): …`） |
+| 带答案签名 | 0（R1 的注入是进程环境变量，不是源码改动，所以签名对不上）                         |
+
+**「带答案签名 0」不等于干净**：那条提交写的就是本轮要考的那个阈值，而且 reflog
+看得见——发布类批次留下的答案，原封不动摆在运行期这一轮的证据面上。
+批次口径：独立 5｜污染 8｜未知 11（共 24 轮）。
+
+### 四、台子已修（`incident/runs/run-round.mjs`，**未跑过验证**）
+
+运行期（R1）的 `inject()` 现在跟发布类那一轮一样有源码面闸门，顺序不可反：
+
+1. `purgeLabCommits(repo)`——过期 reflog + gc 掉不可达对象（项目自带提交在 ref 上，不受影响）；
+2. `measureSourceSurface(...)` 实测，`foreign_count > 0` 就 `fail`，这一轮不跑；
+3. 把 `evidence_surface`（含 `same_as_channel: true`）与 `source_surface`
+   （本轮实测）记进 manifest——审计不用再靠事后补录。
+
+`AA7ECB6` 这类残留**明天第一次跑 R1 时会自动清掉**，日志会打印
+`已清掉实验留下的提交：N → M 个提交对象`。**但这段改动还没被一次真实轮次验证过**，
+明天开跑第一轮时先看这条日志和 `fail` 闸门是不是按预期工作。
+
+### 五、明天接着做什么
+
+1. 先跑**一轮** R1，确认源码面闸门真的拦/清了（看日志与 manifest 的
+   `injection.source_surface.foreign_count` 是不是 0）。
+2. 闸门确认后跑满 5 轮；跑完按 R1-v2 重打分（`--truth R1.v2.json --only-fault R1`），
+   再跑 `independence-audit.mjs`（**这次不需要 `--surface-map`**）+ `round-table.mjs`。
+3. 渠道审计那两处真越界要写进 R1 的诚实结论里：5 轮里 2 轮有越界（0707Z 2 处、0817Z 1 处），
+   都是 `curl` 直连 Prometheus——不是致命污染，但要披露。
+4. 夹具侧的跨轮隔离（日志轮转 + 指标清零）仍是待办，见最后一节。
 
 ---
 
@@ -15,10 +99,10 @@ v6 修掉，对真实轮次**零影响**（21 轮重打分，0 轮判定变化�
 
 对照 `control-negative-weipai.md` = 老的方向错对照 + 一句「本次发布未引入该阈值」：
 
-| 判据   | accuracy | tier    | attribution | correct |
-| ------ | --------- | ------- | ----------- | ------- |
-| R2 v5  | **1.0**   | **hit** | unclear      | unclear |
-| R2 v6  | 0.5       | partial | excluded    | wrong   |
+| 判据  | accuracy | tier    | attribution | correct |
+| ----- | -------- | ------- | ----------- | ------- |
+| R2 v5 | **1.0**  | **hit** | unclear     | unclear |
+| R2 v6 | 0.5      | partial | excluded    | wrong   |
 
 **hit 档量不到方向**：这份报告把发布明确排除了，却因为那一句「未引入」被判成
 「说了发布是触发源」。
@@ -257,17 +341,18 @@ v1 的 C2 收不到）在 v1 下是 partial——**差别只在空间写法**，
 2. 跨轮隔离的两张面**只在真实靶子的目录里量过**。合成夹具那一侧**已确认**
    （2026-11-12 晚，实测）：
 
-   | 通道     | 夹具侧实测                                            | 结论                     |
-   | -------- | ----------------------------------------------------- | ------------------------ |
-   | 部署台账 | 夹具工作区**没有台账**（`workspace/` 下只有 logs / target-service / tools） | **不存在这条通道**        |
-   | 指标面   | 夹具 Prometheus 用**具名卷** `incident-lab_prometheus-data`，保留期 6h | **同批次内跨轮累积**      |
-   | 日志面   | 夹具日志是单个 `app.log`（按天轮转）                   | **同批次内跨轮累积**      |
+   | 通道     | 夹具侧实测                                                                  | 结论                 |
+   | -------- | --------------------------------------------------------------------------- | -------------------- |
+   | 部署台账 | 夹具工作区**没有台账**（`workspace/` 下只有 logs / target-service / tools） | **不存在这条通道**   |
+   | 指标面   | 夹具 Prometheus 用**具名卷** `incident-lab_prometheus-data`，保留期 6h      | **同批次内跨轮累积** |
+   | 日志面   | 夹具日志是单个 `app.log`（按天轮转）                                        | **同批次内跨轮累积** |
 
    实测细节：`incident-prometheus`（夹具那个，:9090）的 head block `minTime`
    落在今天 07:20Z；查 11-05 与 10-27 的历史区间**返回 0 点**——6 小时保留期
    把更早的轮次清掉了，但**同一批批次内**的跨轮可见性依然存在。
    夹具侧那 4 轮有效证据当初依赖 :9090 上的历史数据（compose 注释里写着），
    所以要按五面口径跑**新的**夹具轮次，得先把日志轮转与指标清零补上。
+
 3. 简历包那条既有缺陷仍未处理：`validate-resume-package` 对真包报 **15/17**
    （B3 / B6），**要走 claim 的复核流程**，不是随手改。
 

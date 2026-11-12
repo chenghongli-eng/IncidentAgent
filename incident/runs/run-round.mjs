@@ -89,7 +89,7 @@ const {
 } = await import(new URL('./real-target.mjs', import.meta.url).href);
 const { hostObservation, toLedgerEntry, processStartMs, treeIdentity } =
   await import(new URL('../collector/host-target.mjs', import.meta.url).href);
-const { buildRelease, revertRelease } = await import(
+const { buildRelease, revertRelease, purgeLabCommits } = await import(
   new URL('./real-release.mjs', import.meta.url).href
 );
 const { readLedger, COMMIT_AUTHORITY } = await import(
@@ -1280,6 +1280,49 @@ const REAL_SPEC = {
         '启动规格里没有故障旋钮（faultEnv 是空的）——这一轮不会注入任何东西。',
       );
     }
+    // ── 源码面闸门（2026-11-12 补）────────────────────────────────
+    //
+    // 运行期这一轮**自己**不发版、不改代码，但源码快照是**共用**的。
+    // 上一批（发布类）留下的注入提交还躺在里面：reflog 指着它，对象库里
+    // 也能 `git show` 出来，内容是「调整健康检查的磁盘空间阈值」——
+    // 那是**别的批次**的答案。2026-11-12 的 R1 批次就是这么被污染的：
+    // 五轮全被判成污染（源码面外来提交 1 个，带答案签名 0 个，但那一条
+    // 提交本身就是别人批次写进配置文件的阈值，且它在 reflog 里可达，
+    // `git reflog` 就看得见）。
+    //
+    // 所以这里做两件事，顺序不能反：
+    //   1. 先把实验自己留下的提交清掉（过期 reflog + gc 掉不可达对象；
+    //      项目自带的提交都在 ref 上，不受影响）；
+    //   2. 再**实测**源码面：还有外来提交，这一轮就不跑。
+    //
+    // 为什么不靠事后重测：事后重测量的是「批次结束时那个仓库」，不是
+    // 「Agent 当时看到的那个仓库」——量的东西和要判的东西不是一回事。
+    const repo = LAUNCH_SPEC.release?.repo ?? LAB_PATHS.realRepoPath;
+    const purge = purgeLabCommits(repo);
+    if (purge.commits_after !== purge.commits_before) {
+      log(
+        `  已清掉实验留下的提交：${purge.commits_before} → ${purge.commits_after} 个提交对象`,
+      );
+    }
+    const pristine = pristineOf(repo);
+    const sourceSurface = measureSourceSurface(repo, {
+      head: null,
+      injectedAt: new Date().toISOString(),
+      pristineRepo: pristine,
+    });
+    if (sourceSurface.status !== 'measured') {
+      fail(
+        `源码面量不了（${sourceSurface.why}）——没有尺子就判不了干净，这一轮不跑。`,
+      );
+    }
+    if (sourceSurface.foreign_count > 0) {
+      fail(
+        `源码面不干净：有 ${sourceSurface.foreign_count} 个实验留下的提交` +
+          `（其中 ${sourceSurface.answering_count} 个带着本轮同样的答案签名）：` +
+          `${sourceSurface.foreign.map((f) => f.sha.slice(0, 10)).join(', ')}\n` +
+          '  别的批次的答案还摆在这一轮的证据面里——这一轮不跑。',
+      );
+    }
     const stopped = await stopTarget(LAUNCH_SPEC);
     if (!stopped.stopped) {
       fail(`停不掉基线态的靶子：${stopped.why}`);
@@ -1295,14 +1338,48 @@ const REAL_SPEC = {
           '  注入没生效就不跑 Agent——那会变成一轮「在没故障的台子上测诊断」。',
       );
     }
+    // 证据面：这一轮**运行中那个实例**的日志目录。
+    //
+    // 运行期这一轮是**不分相**的：靶子跑在常态那个 run 目录里，日志落在
+    // 它下面，而只读工具的 logs 通道读的正是同一个目录（descriptor 的
+    // logsDir）。所以故障相的日志面**就是**通道面——`same_as_channel: true`
+    // 是这件事的书面形式：审计据此按**本轮自己的那份归档**来量（下一轮
+    // 基线时归档的那一份），而不是按批次结束时的目录。
+    const faultPid = listenPid(LAUNCH_SPEC.port);
+    const held = faultPid ? heldLogFiles(realDeps, faultPid) : [];
+    const evidenceSurface = pickEvidenceDir(held, LAUNCH_SPEC.runDir);
+    if (!evidenceSurface) {
+      fail(
+        '量不出故障态实例的日志目录（进程没有持有任何 .log 文件）：' +
+          `pid=${faultPid ?? '无'}，持有的文件=${held.join(', ') || '一个都没有'}。` +
+          '没有证据面就等于这一轮没有日志通道。',
+      );
+    }
+
     return {
       changed: knobs,
       unchanged: ['代码', '制品', '制品 digest'],
       probe: `注入后 /actuator/health = ${ready.status}`,
+      source_repo: repo,
+      evidence_surface: {
+        dir: evidenceSurface,
+        pid: faultPid,
+        held_log_files: held,
+        same_as_channel: true,
+        source: 'measured-from-running-process',
+      },
+      source_surface: {
+        measured_at: new Date().toISOString(),
+        head: null,
+        foreign_count: sourceSurface.foreign_count,
+        answering_count: sourceSurface.answering_count,
+        foreign_shas: sourceSurface.foreign.map((f) => f.sha),
+        pristine_repo: pristine,
+        source: 'measured-at-injection',
+      },
       note: '只改运行时旋钮（进程环境），代码与制品一行没动；进程重启让旋钮生效',
     };
   },
-
   /** 恢复：按基线态的环境变量重启进程，并把 5xx 比例等回 0。 */
   async restore() {
     const stopped = await stopTarget(LAUNCH_SPEC);
