@@ -146,6 +146,38 @@ check(
   threw ? '抛错' : '没抛错',
 );
 
+// ── F：基线制品目录的两种写法都要认（发布类 vs 运行时类规格）─────────
+//
+// 判据只认一种写法时，另一类故障的基线身份记录会被当成「实验室自己造的
+// 发布」→ 闸门误中止。R1 批次就是这么秒退的：R2 规格把基线写在
+// phases.baseline.artifactDir，R1 规格只有顶层 artifactDir。
+//
+// 三条对照用同一份台账，只换传给判据的那个目录。
+const ledgerF = join(tmp, 'ledger-f.jsonl');
+makeLedger(ledgerF, { withForeign: false });
+rotateLedger({
+  ledgerPath: ledgerF,
+  seedPath,
+  archiveDir: join(tmp, 'archive'),
+  stamp: 'control',
+});
+const foreignR1Form = countForeignLabEntries(ledgerF, {
+  baselineArtifactDir: '/lab/artifacts/651',
+});
+const foreignWrongDir = countForeignLabEntries(ledgerF, {
+  baselineArtifactDir: '/lab/artifacts/999',
+});
+check(
+  'F 正对照（近似）：基线目录按运行时类规格的写法给出 → 不算外来',
+  foreignR1Form === 0,
+  `外来记录 ${foreignR1Form} 条（期望 0）`,
+);
+check(
+  'F 负对照：基线目录给错 → 基线身份记录被认成外来（判据确实在起作用）',
+  foreignWrongDir > 0,
+  `外来记录 ${foreignWrongDir} 条（期望 >0）`,
+);
+
 // ── C / D：Prometheus 清零 ─────────────────────────────────────────
 // 靶子必须先停：靶子跑着的话，重建后的 Prometheus 会立刻抓到它，
 // 序列数就不可能是 0——那时候判负的是「靶子还活着」，不是「没清干净」。

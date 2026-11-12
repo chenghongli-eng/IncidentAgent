@@ -1953,8 +1953,23 @@ async function isolateRealRound() {
         : '（旧台账为空，无需归档）'),
   );
 
+  // 允许留在台账里的本地发布目录 = **基线制品目录**。
+  //
+  // 两种启动规格都合法：发布类（R2）把基线写在 phases.baseline.artifactDir，
+  // 运行时类（R1）只有顶层 artifactDir。判据只认其中一种时，另一类故障的
+  // 基线身份记录会被当成「实验室自己造的发布」而中止——R1 批次就是这么秒退的。
+  const baselineArtifactDir =
+    LAUNCH_SPEC.phases?.baseline?.artifactDir ??
+    LAUNCH_SPEC.artifactDir ??
+    null;
+  if (!baselineArtifactDir) {
+    fail(
+      '启动规格里找不到基线制品目录（phases.baseline.artifactDir 或 artifactDir）——' +
+        '分不清台账里哪条是基线、哪条是上一轮实验室自己造的，这一轮不开跑。',
+    );
+  }
   const foreign = countForeignLabEntries(PROFILE.ledgerPath, {
-    baselineArtifactDir: LAUNCH_SPEC.phases?.baseline?.artifactDir,
+    baselineArtifactDir,
   });
   if (foreign > 0) {
     fail(
