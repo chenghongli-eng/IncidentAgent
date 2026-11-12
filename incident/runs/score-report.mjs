@@ -424,6 +424,29 @@ function extractSections(text) {
     out.anchors = i === -1 ? null : lines.slice(i).join('\n');
   }
 
+  // 正文：从**第一个诊断小节**起（锚点 / 根因假设 / 支持证据 / …）到报告末尾。
+  //
+  // 为什么要有这一节：v5 起有些方向判据要扫全文（报告可能把结论写在
+  // 最后一节），而全文包含**报告开头那段自述**——口径说明、排查前提、
+  // 「本轮假设是 X 还是 Y」这类话。它们是**元说明**，不是诊断结论：
+  // 里面同时出现版本词与阈值词，就会被方向判据当成一次归因。
+  // 真实轮次里第一份被这条路径坑到的就是对照报告自己开头那段
+  // 「这份对照的用途：同样出现新制品/新增/阈值」——它把方向判据判成了命中。
+  //
+  // 所以正文从第一个小节起算：元说明留在外面，结论留在里面。
+  // 一个小节都认不出来时退回全文（判据宁可宽松也别判 NO_SECTION）。
+  const anchorStart =
+    anchorHeading >= 0
+      ? anchorHeading
+      : lines.findIndex((l) => l.includes('锚点'));
+  const bodyStart = Math.min(
+    ...[...starts.map((s) => s.index), anchorStart].filter((i) => i >= 0),
+  );
+  out.body =
+    Number.isFinite(bodyStart) && bodyStart >= 0
+      ? lines.slice(bodyStart).join('\n')
+      : text;
+
   out.whole = text;
   return out;
 }
