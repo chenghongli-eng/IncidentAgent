@@ -111,18 +111,19 @@ export function commitSignature(repo, sha) {
   return lines.sort().join('\n');
 }
 
-/** 对象库里所有提交对象（含悬空的、reflog 指着的）。 */
+/**
+ * 对象库里所有提交对象（含悬空的、reflog 指着的）。
+ *
+ * 读失败**不吞**：吞掉就会把「读不到」变成「没有外来提交」——于是源码面
+ * 被判成干净，而实际上根本没量。这条量具一次假阴性，整批轮次的命中率就
+ * 是假的。调用方负责把异常翻译成「量不到」，而不是当成干净。
+ */
 export function allCommitObjects(repo) {
-  let out = '';
-  try {
-    out = git(repo, [
-      'cat-file',
-      '--batch-all-objects',
-      '--batch-check=%(objectname) %(objecttype)',
-    ]);
-  } catch {
-    return [];
-  }
+  const out = git(repo, [
+    'cat-file',
+    '--batch-all-objects',
+    '--batch-check=%(objectname) %(objecttype)',
+  ]);
   return out
     .split('\n')
     .filter((l) => l.endsWith(' commit'))
@@ -194,7 +195,19 @@ export function measureSourceSurface(repo, { head, injectedAt, pristineRepo }) {
   const ownSignature = head ? commitSignature(repo, head) : null;
   const foreign = [];
   const answering = [];
-  for (const sha of allCommitObjects(repo)) {
+  let ownShas;
+  try {
+    ownShas = allCommitObjects(repo);
+  } catch (err) {
+    // 量不到就记「量不到」，不许当成干净。
+    return {
+      status: 'not_measured',
+      why: `读不出源码快照的对象清单：${err.message}`,
+      foreign: [],
+      answering: [],
+    };
+  }
+  for (const sha of ownShas) {
     if (pristineObjects.has(sha)) continue;
     if (head && sha === head) continue;
     let date;

@@ -115,8 +115,9 @@ check(
 );
 check(
   'B 正对照（近似）：真实发布史与基线身份记录仍在',
-  readFileSync(ledgerA, 'utf8').includes('registry.example:5000/team/app:645') &&
-    readFileSync(ledgerA, 'utf8').includes('/lab/artifacts/651'),
+  readFileSync(ledgerA, 'utf8').includes(
+    'registry.example:5000/team/app:645',
+  ) && readFileSync(ledgerA, 'utf8').includes('/lab/artifacts/651'),
   '轮转后台账里真实发布史与基线身份记录都还在',
 );
 check(
@@ -139,7 +140,11 @@ try {
 } catch {
   threw = true;
 }
-check('E 负对照：基线种子不存在时报错而不是悄悄通过', threw, threw ? '抛错' : '没抛错');
+check(
+  'E 负对照：基线种子不存在时报错而不是悄悄通过',
+  threw,
+  threw ? '抛错' : '没抛错',
+);
 
 // ── C / D：Prometheus 清零 ─────────────────────────────────────────
 // 靶子必须先停：靶子跑着的话，重建后的 Prometheus 会立刻抓到它，
@@ -159,7 +164,10 @@ const promUrl = 'http://127.0.0.1:9094';
 // 靶子的应用标签从仓库外的描述文件取（真实项目的名字不进公开仓库）。
 const DESCRIPTOR =
   process.env.INCIDENT_TARGET_FILE ??
-  join(process.env.HOME ?? '/root', 'incident-lab-archive/targets/p2-real.json');
+  join(
+    process.env.HOME ?? '/root',
+    'incident-lab-archive/targets/p2-real.json',
+  );
 const APP = JSON.parse(readFileSync(DESCRIPTOR, 'utf8')).application;
 const before = await countAppSeries(promUrl, APP).catch(() => null);
 let prom = null;
@@ -180,7 +188,7 @@ check(
   prom !== null && prom.series_after === 0,
   prom
     ? `重建前靶子序列 ${before ?? '(查不到)'} → 重建后 ${prom.series_after}；` +
-      `容器换新=${prom.recreated}、时序库卷换新=${prom.volume_renewed}`
+        `容器换新=${prom.recreated}、时序库卷换新=${prom.volume_renewed}`
     : `重建失败：${promError}`,
 );
 
@@ -189,7 +197,10 @@ check(
 let seriesAfterTarget = null;
 try {
   startTarget(spec, { env: {} });
-  const ready = await waitReady(spec, { expectedStatus: 200, timeoutMs: 180000 });
+  const ready = await waitReady(spec, {
+    expectedStatus: 200,
+    timeoutMs: 180000,
+  });
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
     seriesAfterTarget = await countAppSeries(promUrl, APP);

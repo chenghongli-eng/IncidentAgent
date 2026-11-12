@@ -59,7 +59,8 @@ const LEDGER = opt('--ledger', LAB_PATHS.realLedger);
  * 混进真实项目的发布史。真实项目的 registry 带端口（host:port/...），
  * 这条规则把两类分开。
  */
-const isRegistryRef = (ref) => /^[A-Za-z0-9._\-]+:\d+\/[^\s]+:[^\s]+$/.test(ref);
+const isRegistryRef = (ref) =>
+  /^[A-Za-z0-9._\-]+:\d+\/[^\s]+:[^\s]+$/.test(ref);
 
 const rows = readFileSync(LEDGER, 'utf8')
   .split('\n')

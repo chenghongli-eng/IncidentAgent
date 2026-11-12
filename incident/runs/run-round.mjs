@@ -76,11 +76,9 @@ const { realTargetPreflight, realDeps, heldLogFiles } = await import(
 const { measureSourceSurface, pristineOf } = await import(
   new URL('./independence-surfaces.mjs', import.meta.url).href
 );
-const {
-  rotateLedger,
-  countForeignLabEntries,
-  resetPrometheus,
-} = await import(new URL('./round-isolation.mjs', import.meta.url).href);
+const { rotateLedger, countForeignLabEntries, resetPrometheus } = await import(
+  new URL('./round-isolation.mjs', import.meta.url).href
+);
 const {
   loadSpec,
   startTarget,
@@ -1950,7 +1948,9 @@ async function isolateRealRound() {
   }
   log(
     `  台账已轮转到基线种子（${ledger.seeded_entries} 条真实发布史）` +
-      (ledger.archived ? `，旧台账归档到 ${ledger.archived}` : '（旧台账为空，无需归档）'),
+      (ledger.archived
+        ? `，旧台账归档到 ${ledger.archived}`
+        : '（旧台账为空，无需归档）'),
   );
 
   const foreign = countForeignLabEntries(PROFILE.ledgerPath, {

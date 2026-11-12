@@ -50,6 +50,11 @@ function run(cmd, args, opts = {}) {
     return execFileSync(cmd, args, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      // 缓冲必须放大：git cat-file --batch-all-objects 会把对象库里**每个**
+      // 对象列一行，这份真实仓库的清单已经 1.3MB，超过 execFileSync 默认的
+      // 1MB —— 溢出时它抛的是 ENOBUFS，错误信息里混着几十万行输出，
+      // 看起来像 git 自己失败了（这个坑真的让一整批 5 轮全灭）。
+      maxBuffer: 64 * 1024 * 1024,
       ...opts,
     }).trim();
   } catch (err) {
@@ -85,7 +90,7 @@ export function purgeLabCommits(repo) {
     .split('\n')
     .filter((l) => l.endsWith(' commit')).length;
   git(repo, ['reflog', 'expire', '--expire=now', '--all']);
-  git(repo, ['gc', '--prune=now', '--quiet']);
+  gcWithRetry(repo);
   const after = git(repo, [
     'cat-file',
     '--batch-all-objects',
@@ -94,6 +99,27 @@ export function purgeLabCommits(repo) {
     .split('\n')
     .filter((l) => l.endsWith(' commit')).length;
   return { commits_before: before, commits_after: after };
+}
+
+/**
+ * git gc，遇上有别的 gc 在跑就等它跑完再试。
+ *
+ * git 自己会检查**整机**上有没有别的 gc 正在进行，有就拒绝执行。上一轮
+ * 刚 gc 完、后台进程还没退出时，下一轮就会撞上这个拒绝——那是瞬时状态，
+ * 不是错误。直接失败等于让整轮中止；等两秒重试，几次都撞不上才真的报错。
+ */
+function gcWithRetry(repo, { tries = 10, waitMs = 2000 } = {}) {
+  for (let attempt = 1; attempt <= tries; attempt += 1) {
+    try {
+      git(repo, ['gc', '--prune=now', '--quiet']);
+      return { gc_attempts: attempt };
+    } catch (err) {
+      if (!/gc.*(running|正运行)/is.test(err.message)) throw err;
+      if (attempt === tries) throw err;
+      execFileSync('sleep', ['2']);
+    }
+  }
+  return { gc_attempts: tries };
 }
 
 /**
