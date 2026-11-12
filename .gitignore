@@ -83,6 +83,12 @@ models.json
 # IncidentAgent lab runtime artifacts
 incident/logs/
 incident/*-data/
+# The independence audit writes its product next to the rounds directory it
+# measured. When the table runs over the repository's own fixture rounds, that
+# product lands inside the repository -- it is a generated artifact (it carries
+# absolute paths of the measured environment), not source. The canonical
+# product for the real rounds lives outside the repository, next to them.
+incident/runs/independence-audit.json
 
 # The diagnosis Agent's workspace used to live here (incident/workspace/) as
 # its own git repository, so the agent could read the target service's history
