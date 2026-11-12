@@ -113,6 +113,18 @@ const manifests = readdirSync(RUNS)
  *   所以每次出表都重新量一遍：量不出来就不算数。
  */
 function runIndependenceAudit() {
+  // 对照用：允许喂一份现成的审计 JSON（独立对照要在合成轮次上断言表的判定，
+  // 而合成轮次跑不出真的审计结果）。生产路径不设这个变量。
+  const override = process.env.INDEPENDENCE_AUDIT_JSON;
+  if (override) {
+    try {
+      return JSON.parse(readFileSync(override, 'utf8'));
+    } catch (e) {
+      throw new Error(
+        `指定的独立性审计文件读不出合法 JSON（${override}）：${e.message}`,
+      );
+    }
+  }
   const r = spawnSync(
     NODE,
     [join(here, 'independence-audit.mjs'), RUNS, '--json'],
@@ -132,6 +144,48 @@ function runIndependenceAudit() {
         '量不出独立性就不能出命中率——先修审计，再出表。',
     );
   }
+}
+
+/**
+ * 把审计的一轮判定翻译成表要的三个状态。
+ *
+ * 这里曾经踩过一个很隐蔽的坑：审计的每轮字段叫 `verdict`
+ * （independent / contaminated / unknown），表读的却是 `ind.independent`——
+ * 一个**不存在**的字段。于是：
+ *   · `ind.independent === false` 永远不成立 → 污染的轮次**没被剔出分母**；
+ *   · `independent` 是 undefined → 表里那一列永远显示「否（陈旧 null）」；
+ *   · 汇总那行永远写「0/N 独立」。
+ *
+ * 列还在、汇总还在，可判据已经不生效了——比没有这条判据更坏：它让人以为
+ * 判据在管着分母。所以这里按 `verdict` 读，并且把三种状态都分开：
+ * 独立 / 污染 / 未知。未知也剔出分母（未知不等于干净）。
+ */
+function independenceOf(ind) {
+  if (!ind) {
+    return { state: 'missing', independent: null, detail: '审计里没有这一轮' };
+  }
+  if (ind.verdict === 'independent') {
+    return { state: 'independent', independent: true, detail: null };
+  }
+  if (ind.verdict === 'contaminated') {
+    const dirty = (ind.surfaces ?? []).filter(
+      (s) =>
+        s.status === 'measured' &&
+        (s.surface === 'source_repo'
+          ? (s.foreign_count ?? 0) > 0
+          : (s.traces_before_injection ?? 0) > 0),
+    );
+    return {
+      state: 'contaminated',
+      independent: false,
+      detail: `污染面：${dirty.map((s) => s.surface).join('、') || '未知'}`,
+    };
+  }
+  return {
+    state: 'unknown',
+    independent: null,
+    detail: `量不到的面：${ind.unmeasured_surfaces ?? 0} 张`,
+  };
 }
 
 const independence = runIndependenceAudit();
@@ -203,13 +257,16 @@ for (const f of manifests) {
    * （mode != descriptor）没有真实日志面，不适用这条判据。
    */
   const ind = independenceByStamp.get(m.stamp) ?? null;
-  const indUnknown = isReal && !ind;
-  const indContaminated = Boolean(ind && ind.independent === false);
-  const independenceProblem = indContaminated
-    ? `样本不独立：证据面上有 ${ind.traces_before_injection} 条早于本轮注入的痕迹`
-    : indUnknown
-      ? '样本独立性未知：独立性审计里没有这一轮'
-      : null;
+  const indState = independenceOf(ind);
+  // 真实轮次必须有「独立」的判定才算数：污染剔出，未知也剔出——
+  // 未知不等于干净，量不到的面不能拿来当独立样本。
+  const indUnknown = isReal && indState.state !== 'independent';
+  const independenceProblem =
+    indState.state === 'contaminated'
+      ? `样本不独立：审计判定污染（${indState.detail}）`
+      : indUnknown
+        ? `样本独立性未知：${indState.detail}`
+        : null;
 
   const valid =
     m.round_valid !== false &&
@@ -224,8 +281,9 @@ for (const f of manifests) {
     fault: m.fault,
     manifest: f,
     valid,
-    independent: ind ? ind.independent : null,
-    traces_before_injection: ind?.traces_before_injection ?? null,
+    independent: indState.independent,
+    independence_state: indState.state,
+    independence_detail: indState.detail,
     invalid_reason:
       m.invalid_reason ??
       auditMismatch ??
@@ -286,11 +344,13 @@ for (const r of rows) {
       ? '未跑'
       : `${r.audit}（污染 ${r.contaminating ?? '?'} / 越界 ${r.out_of_surface ?? '?'}）`;
   const ind =
-    r.independent === null
-      ? '—'
-      : r.independent
-        ? '是'
-        : `**否**（陈旧 ${r.traces_before_injection}）`;
+    r.independence_state === 'independent'
+      ? '是'
+      : r.independence_state === 'contaminated'
+        ? `**否**（${r.independence_detail}）`
+        : r.independence_state
+          ? `**未知**（${r.independence_detail}）`
+          : '—';
   const dep =
     r.deployment === null
       ? '—'
@@ -335,11 +395,20 @@ if (scored.length > 0) {
   console.log(`| --- | --- |`);
   console.log(`| 有效轮数（分母） | ${n} |`);
   console.log(`| 无效轮数（不计入分母） | ${invalid.length} |`);
-  const indScored = rows.filter((r) => r.independent !== null);
-  if (indScored.length) {
-    const indOk = indScored.filter((r) => r.independent).length;
+  const indReal = rows.filter((r) => r.independence_state !== 'missing');
+  if (indReal.length) {
+    const indOk = indReal.filter(
+      (r) => r.independence_state === 'independent',
+    ).length;
+    const indBad = indReal.filter(
+      (r) => r.independence_state === 'contaminated',
+    ).length;
+    const indUnknown = indReal.filter(
+      (r) => r.independence_state === 'unknown',
+    ).length;
     console.log(
-      `| 样本独立性审计覆盖的轮次 | ${indOk}/${indScored.length} 独立（不独立的已剔出分母） |`,
+      `| 样本独立性审计覆盖的轮次 | ${indOk}/${indReal.length} 独立` +
+        `（污染 ${indBad}、未知 ${indUnknown}，两者都已剔出分母） |`,
     );
   }
   console.log(`| 根因命中（hit） | ${pct(tiers.hit)} |`);

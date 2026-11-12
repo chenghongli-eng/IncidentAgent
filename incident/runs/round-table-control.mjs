@@ -78,10 +78,11 @@ function extractJson(out) {
 }
 
 /** 跑表并解析出某一轮的有效判定。 */
-function verdicts(dir) {
+function verdicts(dir, env = {}) {
   const r = spawnSync(process.execPath, [TABLE, dir, '--json'], {
     encoding: 'utf8',
     maxBuffer: 32 << 20,
+    env: { ...process.env, ...env },
   });
   if (r.status !== 0) {
     throw new Error(
@@ -90,6 +91,39 @@ function verdicts(dir) {
   }
   const rows = JSON.parse(extractJson(r.stdout));
   return new Map(rows.map((x) => [x.stamp, x]));
+}
+
+/**
+ * 合成一份独立性审计产物。
+ *
+ * 为什么要能喂假的审计：合成轮次跑不出真的审计结果（真审计量的是真日志面、
+ * 真源码面），而「污染的轮次要剔出分母」这条判据恰恰只能在合成轮次上断言。
+ * 四条对照用**同一份**合成 manifest，只换审计判定——差别只在这一个变量。
+ */
+function synthAudit(dir, rounds) {
+  const file = join(dir, 'independence-audit.json');
+  writeFileSync(
+    file,
+    JSON.stringify(
+      {
+        generated_at: '2026-11-12T00:00:00.000Z',
+        rounds,
+        independent: rounds
+          .filter((r) => r.verdict === 'independent')
+          .map((r) => r.stamp),
+        contaminated: rounds
+          .filter((r) => r.verdict === 'contaminated')
+          .map((r) => r.stamp),
+        unknown: rounds
+          .filter((r) => r.verdict === 'unknown')
+          .map((r) => r.stamp),
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+  return file;
 }
 
 const real = verdicts(RUNS);
@@ -266,6 +300,107 @@ try {
       v.get('2026-11-02T9994Z')?.valid === true,
       `valid=${v.get('2026-11-02T9994Z')?.valid}`,
     );
+  }
+
+  // ── 样本独立性判据（G/H/I/J）───────────────────────────────────────
+  //
+  // 这一组是「同一份 manifest，只换审计判定」：分数、报告、transcript 全一样，
+  // 唯一变量是独立性审计怎么说。四条一起断言，才不会出现「判据形同虚设」。
+  //
+  // 判据本身踩过的坑：表读的字段名（`independent`）与审计产出的字段名
+  // （`verdict`）对不上，于是污染的轮次从来没被剔出过分母，而表里那一列
+  // 还在显示「否（陈旧 null）」——列在、汇总在、判据不生效。
+  {
+    const dir = synthDir('independence', {
+      'round-manifest-2026-11-02T9993Z.json': {
+        stamp: '2026-11-02T9993Z',
+        fault: 'R2',
+        target: { mode: 'descriptor' },
+        agent: {
+          report: '<repo>/incident/runs/agent-report-2026-10-30T0738Z.md',
+          chars: 100,
+          transcript:
+            '<repo>/incident/runs/session-transcripts/2026-10-30T07-55-36-536Z_01a18bce-9ed8-7f57-b14b-2adcfdad5a03.jsonl',
+        },
+        score: { path: '<repo>/incident/runs/score-2026-10-30T0738Z.json' },
+        channel_audit: {
+          verdict: 'out_of_surface',
+          contaminating: 0,
+          out_of_surface: 10,
+        },
+      },
+    });
+    dirs.push(dir);
+    const stamp = '2026-11-02T9993Z';
+    const base = {
+      stamp,
+      injected_at: '2026-11-02T09:00:00.000Z',
+      measured_surfaces: 5,
+      unmeasured_surfaces: 0,
+      surfaces: [],
+    };
+
+    // G 负：审计判污染 → 剔出分母
+    {
+      const audit = synthAudit(dir, [
+        {
+          ...base,
+          verdict: 'contaminated',
+          surfaces: [
+            {
+              surface: 'logs_channel',
+              status: 'measured',
+              traces_before_injection: 7,
+            },
+          ],
+        },
+      ]);
+      const v = verdicts(dir, { INDEPENDENCE_AUDIT_JSON: audit });
+      const row = v.get(stamp);
+      check(
+        'G 负对照：审计判污染 → 判无效（剔出分母）',
+        row?.valid === false && /污染/.test(row?.invalid_reason ?? ''),
+        `valid=${row?.valid} 原因=${(row?.invalid_reason ?? '').split('\n')[0]}`,
+      );
+    }
+
+    // H 负：审计判未知（有一张面量不到）→ 同样剔出分母
+    {
+      const audit = synthAudit(dir, [
+        { ...base, verdict: 'unknown', unmeasured_surfaces: 2 },
+      ]);
+      const v = verdicts(dir, { INDEPENDENCE_AUDIT_JSON: audit });
+      const row = v.get(stamp);
+      check(
+        'H 负对照：审计判未知（量不到的面）→ 判无效（未知不等于干净）',
+        row?.valid === false && /未知/.test(row?.invalid_reason ?? ''),
+        `valid=${row?.valid} 原因=${(row?.invalid_reason ?? '').split('\n')[0]}`,
+      );
+    }
+
+    // I 负：审计里根本没有这一轮 → 判未知 → 剔出分母
+    {
+      const audit = synthAudit(dir, []);
+      const v = verdicts(dir, { INDEPENDENCE_AUDIT_JSON: audit });
+      const row = v.get(stamp);
+      check(
+        'I 负对照：审计里没有这一轮 → 判无效（不是「干净」）',
+        row?.valid === false && /未知/.test(row?.invalid_reason ?? ''),
+        `valid=${row?.valid} 原因=${(row?.invalid_reason ?? '').split('\n')[0]}`,
+      );
+    }
+
+    // J 正（近似）：审计判独立 → 判有效（其余条件与上面三条完全一样）
+    {
+      const audit = synthAudit(dir, [{ ...base, verdict: 'independent' }]);
+      const v = verdicts(dir, { INDEPENDENCE_AUDIT_JSON: audit });
+      const row = v.get(stamp);
+      check(
+        'J 正对照（近似）：审计判独立 → 判有效',
+        row?.valid === true,
+        `valid=${row?.valid} 原因=${(row?.invalid_reason ?? '').split('\n')[0]}`,
+      );
+    }
   }
 } finally {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
