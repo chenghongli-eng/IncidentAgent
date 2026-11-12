@@ -33,7 +33,17 @@
  *        签名一致这个判据是**答案无关**的：它拿本轮自己的注入提交当尺子，
  *        脚本里不写任何关于故障机制的字眼。
  *
- * 三张面都量到、且都是 0 痕迹，这一轮才算独立。
+ * 另外两张面（2026-11-12 补）：
+ *
+ *   4. deploy_ledger —— 部署台账。append-only 的台账把实验室自己每一轮造出来
+ *      的发布记录留在里面，下一轮的 Agent 读得到。现在每轮开跑前轮转成
+ *      「真实发布史 + 本轮自己的记录」，并实测实验室自己的记录条数。
+ *
+ *   5. metrics_history —— Prometheus 的时序库。上一轮的 503 突增还在序列里，
+ *      一次 range 查询就能拉出来。现在每轮开跑前重建 Prometheus（换掉匿名卷），
+ *      并实测重建后的序列数。
+ *
+ * 五张面都量到、且都是 0 痕迹，这一轮才算独立。
  * **量不到的（目录没了、仓库没了）一律记 unknown，不许当成干净**——
  * 一个空面和一个干净面长得一模一样，正是本项目栽过的跟头。
  *
@@ -265,6 +275,67 @@ for (let i = 0; i < manifests.length; i += 1) {
     });
   }
 
+  // 4. 部署台账面
+  //
+  // 这一面是 2026-11-12 才被隔离的：台账是 append-only 的，实验室自己每一轮
+  // 造出来的发布记录都留在里面，下一轮的 Agent 读得到（「上一轮也发了新版本、
+  // 然后就 503 了」= 方向上的答案摆在证据面上）。
+  //
+  // 现在的台账在每轮开跑前被轮转成「真实发布史 + 本轮自己的记录」，
+  // 并且**实测**「实验室自己造的发布记录」条数——真实发布史不算痕迹，
+  // 它本来就是这一轮该看见的证据。
+  //
+  // 老轮次没有这个实测值（那时这两条通道还没被隔离）→ 记 unknown，
+  // 不许当成干净：一个量不到的面和一个干净面长得一模一样。
+  const ledgerIsolation = m.target?.isolation?.ledger ?? null;
+  if (ledgerIsolation && ledgerIsolation.foreign_entries !== undefined) {
+    surfaces.push({
+      surface: 'deploy_ledger',
+      status: 'measured',
+      from: 'manifest 记录的本轮实测（开跑时量的）',
+      measured_at: ledgerIsolation.measured_at ?? m.started_at ?? null,
+      traces_total: ledgerIsolation.foreign_entries,
+      traces_before_injection: ledgerIsolation.foreign_entries,
+      note: '台账里实验室自己造的发布记录条数（真实发布史不算痕迹）',
+    });
+  } else {
+    surfaces.push({
+      surface: 'deploy_ledger',
+      status: 'not_measured',
+      why: '这一轮开跑时没有台账隔离的实测值（这条通道当时还没被隔离）',
+      traces_total: null,
+      traces_before_injection: null,
+    });
+  }
+
+  // 5. 指标历史面
+  //
+  // Prometheus 的时序库跨轮累积：上一轮的 503 突增还在序列里，一次 range
+  // 查询就能把上一轮的曲线拉出来。现在每轮开跑前重建 Prometheus（换掉
+  // 匿名卷），并**实测**重建后的序列数。
+  const promIsolation = m.target?.isolation?.prometheus ?? null;
+  if (promIsolation && promIsolation.series_after !== undefined) {
+    surfaces.push({
+      surface: 'metrics_history',
+      status: 'measured',
+      from: 'manifest 记录的本轮实测（开跑时量的）',
+      measured_at: promIsolation.measured_at ?? m.started_at ?? null,
+      traces_total: promIsolation.series_after,
+      traces_before_injection: promIsolation.series_after,
+      container_recreated: promIsolation.recreated ?? null,
+      volume_renewed: promIsolation.volume_renewed ?? null,
+      note: '重建后的 Prometheus 里残留的序列数（0 = 指标面从零开始）',
+    });
+  } else {
+    surfaces.push({
+      surface: 'metrics_history',
+      status: 'not_measured',
+      why: '这一轮开跑时没有指标面隔离的实测值（这条通道当时还没被隔离）',
+      traces_total: null,
+      traces_before_injection: null,
+    });
+  }
+
   const measured = surfaces.filter((s) => s.status === 'measured');
   const notMeasured = surfaces.filter((s) => s.status === 'not_measured');
   const staleTraces = measured.reduce(
@@ -323,8 +394,8 @@ if (last) {
 
 const out = {
   $comment:
-    '样本独立性审计：每一轮开跑时，它的每一个证据面（日志通道面、运行实例日志面、源码快照）上' +
-    '有没有早于本轮注入的痕迹。指标表据此把被污染的轮次剔出分母。' +
+    '样本独立性审计：每一轮开跑时，它的每一个证据面（日志通道面、运行实例日志面、源码快照、' +
+    '部署台账、指标历史）上有没有早于本轮注入的痕迹。指标表据此把被污染的轮次剔出分母。' +
     '量不到的面记 unknown，不当成干净。',
   generated_at: new Date().toISOString(),
   trace_pattern: TRACE_RE.source,

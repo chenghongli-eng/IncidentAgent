@@ -13,6 +13,8 @@
   "realReadonlyCli": "/mnt/my-work/incident-lab/workspace-real/tools/incident-readonly.mjs",
   "realRepoPath": "/mnt/my-work/incident-lab/workspace-real/repo",
   "realLedger": "/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/ledger.jsonl",
+  "realLedgerSeed": "/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/seed.jsonl",
+  "realLedgerArchive": "/home/fs-user/incident-lab-archive/lab-data/deploy-ledger/archive",
   "realTruthDir": "/home/fs-user/incident-lab-archive/real-ground-truth",
   "realRoundsDir": "/home/fs-user/incident-lab-archive/lab-data/rounds",
   "realLaunchSpec": "/home/fs-user/incident-lab-archive/lab-data/targets/p2/launch-spec.json",

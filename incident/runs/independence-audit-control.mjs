@@ -17,6 +17,9 @@
  *   B 去掉那一个外来提交（其余完全相同）          → 应判独立
  *   C 不给原始仓库（源码面量不了）                → 应判未知，不得当成干净
  *   D 日志面里有一条早于注入时刻的痕迹行           → 应判污染，且那条要被数出来
+ *   G 台账面留着上一轮实验室自己的发布记录（2 条）   → 应判污染，且条数要被数出来
+ *   H 指标历史面重建后还剩 3 条序列                  → 应判污染
+ *   I 这两张面没有实测值（老轮次）                   → 应判未知，不得当成干净
  *
  * 用法：node incident/runs/independence-audit-control.mjs
  * 退出码：0 = 全部对照与预期一致；1 = 有一条对不上（审计不能用了）。
@@ -93,6 +96,13 @@ function makeFixture(
     withStaleTrace,
     withSecondRound = false,
     withRecordedForeign = false,
+    // 2026-11-12 起审计多看两张面（部署台账、指标历史）。
+    // 夹具默认给出**干净**的实测值，好让前面几条对照的结论不变；
+    // withLedgerForeign / withPromSeries 用来造这两张面被污染的那一档；
+    // withoutIsolation 造「这一轮没有这两个实测值」（老轮次的情形）。
+    withLedgerForeign = 0,
+    withPromSeries = 0,
+    withoutIsolation = false,
   },
 ) {
   const pristine = join(root, 'pristine');
@@ -200,7 +210,17 @@ function makeFixture(
           }
         : {}),
     },
-    target: { facts: { measured_logs_dir: logs } },
+    target: {
+      facts: { measured_logs_dir: logs },
+      ...(withoutIsolation
+        ? {}
+        : {
+            isolation: {
+              ledger: { foreign_entries: withLedgerForeign },
+              prometheus: { series_after: withPromSeries },
+            },
+          }),
+    },
   });
   writeFileSync(
     join(rounds, 'round-manifest-2026-01-01T0000Z.json'),
@@ -375,6 +395,74 @@ withFixture('f', { withForeignCommit: false, withStaleTrace: false }, (fx) => {
     { status: 'not_measured', verdict: 'unknown' },
   );
 });
+
+// ── 对照 G：台账面被污染 → 判污染 ────────────────────────────────────────
+withFixture(
+  'g',
+  { withForeignCommit: false, withStaleTrace: false, withLedgerForeign: 2 },
+  (fx) => {
+    const audit = runAudit(fx);
+    const row = audit.rounds[0];
+    const led = row.surfaces.find((s) => s.surface === 'deploy_ledger');
+    expect(
+      'G-foreign-ledger-entries',
+      '台账里留着上一轮实验室自己造的发布记录（2 条）→ 判污染，且那两条要被数出来',
+      {
+        verdict: row.verdict,
+        status: led.status,
+        foreign: led.traces_before_injection,
+      },
+      { verdict: 'contaminated', status: 'measured', foreign: 2 },
+    );
+  },
+);
+
+// ── 对照 H：指标历史面被污染 → 判污染 ────────────────────────────────────
+withFixture(
+  'h',
+  { withForeignCommit: false, withStaleTrace: false, withPromSeries: 3 },
+  (fx) => {
+    const audit = runAudit(fx);
+    const row = audit.rounds[0];
+    const met = row.surfaces.find((s) => s.surface === 'metrics_history');
+    expect(
+      'H-stale-metric-series',
+      '重建后的 Prometheus 里还剩 3 条序列（上一轮的历史没清掉）→ 判污染',
+      {
+        verdict: row.verdict,
+        status: met.status,
+        series: met.traces_before_injection,
+      },
+      { verdict: 'contaminated', status: 'measured', series: 3 },
+    );
+  },
+);
+
+// ── 对照 I：这两张面量不到 → 判未知，不得当成干净 ────────────────────────
+withFixture(
+  'i',
+  {
+    withForeignCommit: false,
+    withStaleTrace: false,
+    withoutIsolation: true,
+  },
+  (fx) => {
+    const audit = runAudit(fx);
+    const row = audit.rounds[0];
+    const led = row.surfaces.find((s) => s.surface === 'deploy_ledger');
+    const met = row.surfaces.find((s) => s.surface === 'metrics_history');
+    expect(
+      'I-unmeasured-new-surfaces',
+      '这一轮没有台账/指标面的实测值（老轮次）→ 两张面记 unknown、整轮判未知（不得当成干净）',
+      {
+        ledger: led.status,
+        metrics: met.status,
+        verdict: row.verdict,
+      },
+      { ledger: 'not_measured', metrics: 'not_measured', verdict: 'unknown' },
+    );
+  },
+);
 
 const allPass = results.every((r) => r.ok);
 console.log('独立性审计负对照：\n');

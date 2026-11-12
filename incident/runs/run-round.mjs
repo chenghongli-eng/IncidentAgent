@@ -77,6 +77,11 @@ const { measureSourceSurface, pristineOf } = await import(
   new URL('./independence-surfaces.mjs', import.meta.url).href
 );
 const {
+  rotateLedger,
+  countForeignLabEntries,
+  resetPrometheus,
+} = await import(new URL('./round-isolation.mjs', import.meta.url).href);
+const {
   loadSpec,
   startTarget,
   stopTarget,
@@ -1886,6 +1891,87 @@ async function ensureRealBaseline() {
 }
 
 /**
+ * 把这一轮的证据面隔离出来：两条跨轮累积的通道回到起点状态。
+ *
+ * 台账（append-only）与 Prometheus 时序库都会把上一轮留下的东西
+ * 带到这一轮的证据面里：
+ *   · 台账里留着上一轮实验室自己造出来的发布记录 → Agent 看到
+ *     「上一轮也发了个新版本、然后就 503 了」；
+ *   · Prometheus 里留着上一轮的 503 突增 → 一次 range 查询就把上一轮的
+ *     曲线拉出来了。
+ * 这两条都不是「这一轮该看见的证据」：真实项目的发布史该留着，
+ * 实验室上一轮的产物不该留着。
+ *
+ * 顺序有讲究：
+ *   1. **先停旧实例**：重建 Prometheus 时旧实例还活着，新建的 Prometheus
+ *      会先抓到它，那段历史又进来了；
+ *   2. 再清指标面（重建容器 + 实测序列数归零）；
+ *   3. 再轮转台账（归档旧的、写入基线种子），并**实测**台账里没有
+ *      上一轮实验室自己的发布记录——种子是人写的，得量。
+ */
+async function isolateRealRound() {
+  const pid = listenPid(LAUNCH_SPEC.port);
+  if (pid !== null) {
+    const stopped = await stopTarget(LAUNCH_SPEC);
+    if (!stopped.stopped) {
+      fail(`停不掉旧实例（隔离证据面时）：${stopped.why}`);
+    }
+    log('  旧实例已停（重建 Prometheus 前必须先停，否则它的指标会被重新抓到）');
+  }
+
+  let prometheus;
+  try {
+    prometheus = await resetPrometheus({
+      promUrl: PROFILE.prometheusUrl ?? 'http://127.0.0.1:9094',
+      composeFile: join(LAB, 'docker-compose.yml'),
+      envFile: LAB_ENV,
+      service: 'prometheus-real',
+      appLabel: APP_LABEL,
+    });
+  } catch (err) {
+    fail(`指标面没清干净，这一轮不开跑：${err.message}`);
+  }
+  log(
+    `  Prometheus 已重建：容器 ${prometheus.container_before?.slice(0, 12)} → ` +
+      `${prometheus.container_after?.slice(0, 12)}，时序库卷换新=${prometheus.volume_renewed}，` +
+      `重建后序列数 ${prometheus.series_after}`,
+  );
+
+  let ledger;
+  try {
+    ledger = rotateLedger({
+      ledgerPath: PROFILE.ledgerPath,
+      seedPath: LAB_PATHS.realLedgerSeed,
+      archiveDir: LAB_PATHS.realLedgerArchive,
+      stamp: STAMP,
+    });
+  } catch (err) {
+    fail(`台账轮转失败，这一轮不开跑：${err.message}`);
+  }
+  log(
+    `  台账已轮转到基线种子（${ledger.seeded_entries} 条真实发布史）` +
+      (ledger.archived ? `，旧台账归档到 ${ledger.archived}` : '（旧台账为空，无需归档）'),
+  );
+
+  const foreign = countForeignLabEntries(PROFILE.ledgerPath, {
+    baselineArtifactDir: LAUNCH_SPEC.phases?.baseline?.artifactDir,
+  });
+  if (foreign > 0) {
+    fail(
+      `轮转后台账里还有 ${foreign} 条实验室自己的发布记录——` +
+        '上一轮的答案还摆在这一轮的证据面里，这一轮不开跑。',
+    );
+  }
+  log('  台账外来记录实测为 0 条');
+
+  return {
+    stopped_previous: pid !== null,
+    prometheus,
+    ledger: { ...ledger, foreign_entries: foreign },
+  };
+}
+
+/**
  * 真实这一轮的工作区记忆必须**结构性地**为空。
  *
  * 夹具那边这一步是 memory-de-leak.mjs：把固定的两行 lesson/open_loop 改写掉。
@@ -2009,8 +2095,15 @@ async function main() {
         );
       }
     } else {
+      // 证据面隔离：这一轮开跑前，先把两条**跨轮累积**的通道清到起点状态。
+      //
+      // 为什么这一步排在拉起基线之前：清 Prometheus 要在旧实例还活着的时候做，
+      // 否则重建后的 Prometheus 会先抓到旧实例的指标，那一段历史又进来了。
+      // 顺序是：停旧实例 → 清指标面 → 轮转台账 → 拉起基线。
+      const isolation = await isolateRealRound();
       manifest.target = {
         ...manifest.target,
+        isolation,
         baseline: await ensureRealBaseline(),
       };
       ensureHealthProbe();
