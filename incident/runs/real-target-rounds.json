@@ -1,0 +1,279 @@
+{
+  "$comment": "真实靶子轮次的机器可读总表：只放计数与判定，不放报告正文、不放靶子标识。分母只算独立性审计判为 independent 的轮次（contaminated 与 unknown 都不算数）。由 `incident/runs/build-real-target-summary.mjs` 从仓库外的产物生成，简历包里的数字由 `validate-resume-package.mjs` 的 C6 与本表对账。",
+  "generated_at": "2026-11-13T03:41:15.299Z",
+  "source": {
+    "rounds": "仓库外 lab-data/rounds 的 score-*.json 与 round-manifest-*.json",
+    "truth": "仓库外 real-ground-truth 下的当前真值版本",
+    "audit": "仓库外 independence-audit.json（独立/污染/未知的判定来源）"
+  },
+  "fault_arms": {
+    "R1": "运行时环境里的阈值旋钮（制品未变）",
+    "R2": "随新发布进入制品的阈值配置（运行期环境干净）"
+  },
+  "totals": {
+    "rounds": 10,
+    "independent_samples": 10,
+    "root_cause_hit": 10,
+    "deployment_attribution_correct": 10,
+    "channel_audit_clean": 9,
+    "quality_pass": {
+      "Q1": 10,
+      "Q2": 5,
+      "Q3": 10,
+      "Q4": 7
+    }
+  },
+  "ratios": {
+    "root_cause": {
+      "R1": "5/5",
+      "R2": "5/5",
+      "all": "10/10"
+    },
+    "deployment_attribution": {
+      "R1": "5/5",
+      "R2": "5/5",
+      "all": "10/10"
+    },
+    "q2_layered_attribution": "5/10"
+  },
+  "per_arm": {
+    "R1": {
+      "rounds": 5,
+      "root_cause_hit": 5,
+      "deployment_attribution_correct": 5
+    },
+    "R2": {
+      "rounds": 5,
+      "root_cause_hit": 5,
+      "deployment_attribution_correct": 5
+    }
+  },
+  "agent_duration_s": {
+    "min": 111,
+    "median": 181.5,
+    "max": 365,
+    "mean": 202
+  },
+  "rounds": [
+    {
+      "round": "2026-11-13T0149Z",
+      "arm": "R1",
+      "fault_id": "R1",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "excluded",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "PASS",
+        "Q3": "PASS",
+        "Q4": "PASS"
+      },
+      "agent_duration_s": 213,
+      "truth_version": "R1.v3.json"
+    },
+    {
+      "round": "2026-11-13T0202Z",
+      "arm": "R1",
+      "fault_id": "R1",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "excluded",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 1
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "PASS",
+        "Q3": "PASS",
+        "Q4": "PASS"
+      },
+      "agent_duration_s": 121,
+      "truth_version": "R1.v3.json"
+    },
+    {
+      "round": "2026-11-13T0213Z",
+      "arm": "R1",
+      "fault_id": "R1",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "excluded",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "FAIL",
+        "Q3": "PASS",
+        "Q4": "PASS"
+      },
+      "agent_duration_s": 191,
+      "truth_version": "R1.v3.json"
+    },
+    {
+      "round": "2026-11-13T0226Z",
+      "arm": "R1",
+      "fault_id": "R1",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "excluded",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "FAIL",
+        "Q3": "PASS",
+        "Q4": "PASS"
+      },
+      "agent_duration_s": 140,
+      "truth_version": "R1.v3.json"
+    },
+    {
+      "round": "2026-11-13T0238Z",
+      "arm": "R1",
+      "fault_id": "R1",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "excluded",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "PASS",
+        "Q3": "PASS",
+        "Q4": "PASS"
+      },
+      "agent_duration_s": 244,
+      "truth_version": "R1.v3.json"
+    },
+    {
+      "round": "2026-11-12T0302Z",
+      "arm": "R2",
+      "fault_id": "R2",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "relevant",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "PASS",
+        "Q3": "PASS",
+        "Q4": "FAIL"
+      },
+      "agent_duration_s": 134,
+      "truth_version": "R2.v6.json"
+    },
+    {
+      "round": "2026-11-12T0312Z",
+      "arm": "R2",
+      "fault_id": "R2",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "relevant",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "FAIL",
+        "Q3": "PASS",
+        "Q4": "PASS"
+      },
+      "agent_duration_s": 330,
+      "truth_version": "R2.v6.json"
+    },
+    {
+      "round": "2026-11-12T0326Z",
+      "arm": "R2",
+      "fault_id": "R2",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "relevant",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "FAIL",
+        "Q3": "PASS",
+        "Q4": "PASS"
+      },
+      "agent_duration_s": 365,
+      "truth_version": "R2.v6.json"
+    },
+    {
+      "round": "2026-11-12T0341Z",
+      "arm": "R2",
+      "fault_id": "R2",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "relevant",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "PASS",
+        "Q3": "PASS",
+        "Q4": "NO_SECTION"
+      },
+      "agent_duration_s": 172,
+      "truth_version": "R2.v6.json"
+    },
+    {
+      "round": "2026-11-12T0351Z",
+      "arm": "R2",
+      "fault_id": "R2",
+      "independent": true,
+      "root_cause": "hit",
+      "root_cause_correct": true,
+      "deployment_attribution": "relevant",
+      "deployment_attribution_correct": true,
+      "channel_audit": {
+        "contaminating": 0,
+        "out_of_surface": 0
+      },
+      "quality": {
+        "Q1": "PASS",
+        "Q2": "FAIL",
+        "Q3": "PASS",
+        "Q4": "FAIL"
+      },
+      "agent_duration_s": 111,
+      "truth_version": "R2.v6.json"
+    }
+  ]
+}

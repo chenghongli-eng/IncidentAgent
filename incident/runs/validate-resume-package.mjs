@@ -261,6 +261,139 @@ check(
   'agent-report-2026-10-30T0738Z.md',
 );
 
+// C6 / C7：简历包里那批真实靶子的数字，要和仓库内的机器可读总表对得上。
+//
+// 为什么加这两条：103 那条 claim 的数字（几个独立样本、命中几轮、归因对几轮、
+// 分层归因几轮）原先只能回指到**仓库外**的产物——公开仓库里查不到，
+// 等于简历上挂了一串没人能核的数。`incident/runs/real-target-rounds.json`
+// 把它们落成仓库内可读的总表，这里就拿它跟简历包对账。
+// **查不到就报错，不许静默跳过**：总表缺失也算失败。
+const summaryRaw = readRepo('incident/runs/real-target-rounds.json');
+let summary = null;
+let summaryProblem = null;
+if (!summaryRaw) {
+  summaryProblem = '缺 incident/runs/real-target-rounds.json';
+} else {
+  try {
+    summary = JSON.parse(summaryRaw);
+  } catch (e) {
+    summaryProblem = `总表解析失败：${e.message}`;
+  }
+}
+
+if (!summary) {
+  check('C6 简历包的独立样本数字与仓库总表一致', false, summaryProblem);
+  check('C7 简历包没有落后于总表的旧口径', false, summaryProblem);
+} else {
+  const totals = summary.totals ?? {};
+  const ratios = summary.ratios ?? {};
+  const knownRootCause = new Set(
+    Object.values(ratios.root_cause ?? {}).map(String),
+  );
+  const knownAttribution = new Set(
+    Object.values(ratios.deployment_attribution ?? {}).map(String),
+  );
+
+  const sampleSeen = [
+    ...new Set([...pkgText.matchAll(/(\d+)\s*个独立样本/g)].map((m) => m[1])),
+  ];
+  const sampleBad = sampleSeen.filter(
+    (n) => Number(n) !== Number(totals.independent_samples),
+  );
+  check(
+    'C6 简历包的独立样本数字与仓库总表一致',
+    sampleBad.length === 0,
+    sampleSeen.length === 0
+      ? '包内未出现独立样本数字（不校验）'
+      : `包内取值 ${JSON.stringify(sampleSeen)} / 总表 ${totals.independent_samples}`,
+  );
+
+  const rcSeen = [
+    ...new Set(
+      [...pkgText.matchAll(/根因命中\s*(\d+)\s*\/\s*(\d+)/g)].map(
+        (m) => `${m[1]}/${m[2]}`,
+      ),
+    ),
+  ];
+  const rcBad = rcSeen.filter((r) => !knownRootCause.has(r));
+  check(
+    'C6 简历包写的根因命中数与仓库总表一致',
+    rcBad.length === 0,
+    rcSeen.length === 0
+      ? '包内未出现根因命中数字（不校验）'
+      : `包内取值 ${JSON.stringify(rcSeen)} / 总表允许 ${JSON.stringify([...knownRootCause])}`,
+  );
+
+  const atSeen = [
+    ...new Set(
+      [...pkgText.matchAll(/发布归因\s*(\d+)\s*\/\s*(\d+)/g)].map(
+        (m) => `${m[1]}/${m[2]}`,
+      ),
+    ),
+  ];
+  const atBad = atSeen.filter((r) => !knownAttribution.has(r));
+  check(
+    'C6 简历包写的发布归因数与仓库总表一致',
+    atBad.length === 0,
+    atSeen.length === 0
+      ? '包内未出现发布归因数字（不校验）'
+      : `包内取值 ${JSON.stringify(atSeen)} / 总表允许 ${JSON.stringify([...knownAttribution])}`,
+  );
+
+  const q2Seen = [
+    ...new Set(
+      [...pkgText.matchAll(/分层归因[^0-9]{0,8}(\d+)\s*\/\s*(\d+)/g)].map(
+        (m) => `${m[1]}/${m[2]}`,
+      ),
+    ),
+  ];
+  const q2Bad = q2Seen.filter(
+    (r) => r !== String(ratios.q2_layered_attribution),
+  );
+  check(
+    'C6 简历包写的分层归因命中数与仓库总表一致',
+    q2Bad.length === 0,
+    q2Seen.length === 0
+      ? '包内未出现分层归因数字（不校验）'
+      : `包内取值 ${JSON.stringify(q2Seen)} / 总表 ${ratios.q2_layered_attribution}`,
+  );
+
+  // C7：总表已经跑出新结果，包里却还在说「重跑未执行」——那是**事实性过期**，
+  // 不是措辞问题。过期必须报错，不能靠人记得同步。
+  //
+  // 扫描范围只取**正文 bullet 与台账措辞**：文件抬头里引用旧措辞是合法的
+  // （比如成稿抬头写「已把原来的『重跑未执行』披露换成实测后的披露」），
+  // 那是历史说明，不是当前口径。台账那几段要扫——它同样是当前口径的载体。
+  const claimText = (ledger?.claims ?? [])
+    .map((c) =>
+      [
+        c.candidate_wording,
+        c.candidate_wording_compact,
+        c.interview_details?.result,
+        c.boundary,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    )
+    .join('\n');
+  const currentText = [allBullets.join('\n'), claimText].join('\n');
+  const STALE_MARKERS = [
+    '修复后重跑未执行',
+    '重跑未执行',
+    '重跑批次待执行',
+    '发布类命中率暂缺',
+    '发布类的独立样本数与命中率目前未知',
+  ];
+  const staleHits = STALE_MARKERS.filter((m) => currentText.includes(m));
+  check(
+    'C7 简历包没有落后于总表的旧口径',
+    staleHits.length === 0,
+    staleHits.length === 0
+      ? `总表口径：独立样本 ${totals.independent_samples}，命中 ${ratios.root_cause?.all}`
+      : `包里仍写着旧口径：${staleHits.join('、')}；总表已是 ${totals.independent_samples} 个独立样本`,
+  );
+}
+
 const review0727 = readRepo('incident/runs/audit-2026-10-27T0727Z.md');
 check(
   'C5 「23h55m」可回指到 0727Z 复核件',
