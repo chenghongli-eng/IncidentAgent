@@ -122,6 +122,16 @@ read /mnt/my-work/ai_coting/study/miniclaw-main/miniclaw-main/data/sessions/flow
 4. **R1 的真值口径**现在到 v3（真值与对照都在仓库外）：
    `R1.v3.json`（由 `build-r1-v3.mjs` 从 v2 生成）、
    校准记录 `R1.calibration.R1.v3.json`（7/7）、新增对照两份在 `controls/`。
+5. ⚠️ **默认真值文件落后于已采纳版本——重打分必须带 `--truth`**：
+   仓库外 `R1.json` 还是 **R1-v1**、`R2.json` 还是 **R2-v4**，
+   而实际在用的是 `R1.v3.json` 与 `R2.v6.json`
+   （各轮次分数文件里记的 `ground_truth` 指向后者）。
+   不带 `--truth` 跑 `rescore-all.mjs` 会拿**旧口径**重打分，
+   R1 会退回 v1（那张空白支票）、R2 会退回 v4（命中率 2/5 而不是 5/5），
+   表上一堆「判定变了」全是口径回退造成的假变化。
+   **每次重打分都要显式带 `--truth <当前版本> --only-fault <故障ID>`。**
+   把默认文件推到最新版本需要覆盖仓库外的既有文件（且属于「换默认口径」的授权事项），
+   **尚未做，等拍板**。
 
 ---
 
