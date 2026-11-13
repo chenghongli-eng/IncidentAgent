@@ -280,10 +280,15 @@ try {
   // 所以这里现造一个合成包：数字口径取自仓库内的机器可读总表
   // （incident/runs/real-target-rounds.json），措辞是占位文字。
   // 它必须全绿——否则后面 C6/C7 的负对照证明不了任何事。
-  const SYN_FULL =
-    '**样本独立性审计（合成对照件）** 用合成靶子跑批：两臂合计 10 个独立样本、根因命中 10/10、发布归因 10/10、分层归因 5/10；另有 10 次越界读取与 5 处数字问题待披露。';
-  const SYN_COMPACT =
-    '**样本独立性（合成对照件）**：两臂合计 10 个独立样本、根因命中 10/10、发布归因 10/10、分层归因 5/10，其余问题另计。';
+  //
+  // 口径**从总表里读**，不写死：写死的数字下一次改判据就会过期，
+  // 而过期的合成基线会让所有负对照变成空转（它们都建立在「基线全绿」之上）。
+  const TABLE = JSON.parse(
+    readFileSync(join(here, 'real-target-rounds.json'), 'utf8'),
+  );
+  const Q2_RATIO = TABLE.ratios.q2_layered_attribution;
+  const SYN_FULL = `**样本独立性审计（合成对照件）** 用合成靶子跑批：两臂合计 10 个独立样本、根因命中 10/10、发布归因 10/10、分层归因 ${Q2_RATIO}（口径：按不同层级角色计）；另有 10 次越界读取与 5 处数字问题待披露。`;
+  const SYN_COMPACT = `**样本独立性（合成对照件）**：两臂合计 10 个独立样本、根因命中 10/10、发布归因 10/10、分层归因 ${Q2_RATIO}，其余问题另计。`;
 
   function makeSyntheticPackage(mutate) {
     const dir = mkdtempSync(join(tmpdir(), 'resume-pkg-synthetic-'));
@@ -403,6 +408,67 @@ try {
     check(
       'N13 抬头里引用旧措辞不算过期 → exit 0',
       r.code === 0,
+      `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
+    );
+  }
+
+  // P1 近似阳性：把 Q2 那句换个说法（数字不变、仍写明新口径）→ 必须照样放行。
+  //
+  // 为什么要有它：N14 靠的是「旧口径那几句话」。如果校验其实是靠**别的**
+  // 巧合拦住的（比如整个包都挂了），那 N14 的绿灯就毫无意义。
+  // 所以先证明「只改措辞不改口径」是放得过的，再证明「退回旧口径」拦得住。
+  {
+    const dir = makeSyntheticPackage((files) => {
+      for (const [name, content] of Object.entries(files)) {
+        files[name] = content.replaceAll(
+          `分层归因 ${Q2_RATIO}（口径：按不同层级角色计）`,
+          `分层归因 ${Q2_RATIO}（按不同层级角色计）`,
+        );
+      }
+    });
+    dirs.push(dir);
+    const r = runValidator(dir);
+    check(
+      `P1 Q2 那句换措辞、数字不变 → exit 0（${Q2_RATIO} 仍与总表一致）`,
+      r.code === 0,
+      `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
+    );
+  }
+
+  // N14 简历包还写着旧的 Q2 口径（命中数是旧的，还声称「未改判据迁就」）
+  {
+    const dir = makeSyntheticPackage((files) => {
+      for (const [name, content] of Object.entries(files)) {
+        files[name] = content.replaceAll(
+          `分层归因 ${Q2_RATIO}（口径：按不同层级角色计）`,
+          '分层归因只命中 5/10，属能力缺口，未改判据迁就。',
+        );
+      }
+    });
+    dirs.push(dir);
+    const r = runValidator(dir);
+    check(
+      'N14 简历包退回旧的 Q2 口径 → exit 1，且 C7 必须报错',
+      r.code === 1 && r.failedNames.some((n) => n.startsWith('C7')),
+      `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
+    );
+  }
+
+  // N15 数字是对的，但把「判据改过」这件事悄悄抹掉 → C8 必须报错。
+  //
+  // 披露义务随数字一起走：命中数从 5/10 变成 7/10 的原因（判据口径改了）
+  // 不能只存在于仓库的提交记录里，简历包里也要写明。
+  {
+    const dir = makeSyntheticPackage((files) => {
+      for (const [name, content] of Object.entries(files)) {
+        files[name] = content.replaceAll(`（口径：按不同层级角色计）`, '');
+      }
+    });
+    dirs.push(dir);
+    const r = runValidator(dir);
+    check(
+      'N15 命中数对、但抹掉了口径变更的披露 → exit 1，且 C8 必须报错',
+      r.code === 1 && r.failedNames.some((n) => n.startsWith('C8')),
       `exit=${r.code} 失败：${r.failedNames.join('；') || '（无）'}`,
     );
   }

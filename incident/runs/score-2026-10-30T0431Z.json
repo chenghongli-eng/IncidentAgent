@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-10-30T0431Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v9",
+  "rubric_version": "v10",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -54,10 +54,10 @@
     },
     {
       "id": "Q2",
-      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "name": "分层归因（至少分出两个不同层级角色）",
       "scope": "whole",
       "result": "PASS",
-      "evidence": "….get(\"address\")); ``` **这解释了\"为什么会 NPE\"（前置缺陷：删掉了 null 兜底），但它不是本次的触发原因** —— 该提交自 10-2…"
+      "evidence": "（角色组命中 2 个：触发层、必要·前提层）"
     },
     {
       "id": "Q3",

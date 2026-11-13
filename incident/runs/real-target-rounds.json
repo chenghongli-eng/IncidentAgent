@@ -1,6 +1,6 @@
 {
   "$comment": "真实靶子轮次的机器可读总表：只放计数与判定，不放报告正文、不放靶子标识。分母只算独立性审计判为 independent 的轮次（contaminated 与 unknown 都不算数）。由 `incident/runs/build-real-target-summary.mjs` 从仓库外的产物生成，简历包里的数字由 `validate-resume-package.mjs` 的 C6 与本表对账。",
-  "generated_at": "2026-11-13T03:41:15.299Z",
+  "generated_at": "2026-11-13T08:12:49.604Z",
   "source": {
     "rounds": "仓库外 lab-data/rounds 的 score-*.json 与 round-manifest-*.json",
     "truth": "仓库外 real-ground-truth 下的当前真值版本",
@@ -18,7 +18,7 @@
     "channel_audit_clean": 9,
     "quality_pass": {
       "Q1": 10,
-      "Q2": 5,
+      "Q2": 7,
       "Q3": 10,
       "Q4": 7
     }
@@ -34,7 +34,7 @@
       "R2": "5/5",
       "all": "10/10"
     },
-    "q2_layered_attribution": "5/10"
+    "q2_layered_attribution": "7/10"
   },
   "per_arm": {
     "R1": {
@@ -75,7 +75,7 @@
         "Q4": "PASS"
       },
       "agent_duration_s": 213,
-      "truth_version": "R1.v3.json"
+      "truth_version": "R1.v4.json"
     },
     {
       "round": "2026-11-13T0202Z",
@@ -97,7 +97,7 @@
         "Q4": "PASS"
       },
       "agent_duration_s": 121,
-      "truth_version": "R1.v3.json"
+      "truth_version": "R1.v4.json"
     },
     {
       "round": "2026-11-13T0213Z",
@@ -119,7 +119,7 @@
         "Q4": "PASS"
       },
       "agent_duration_s": 191,
-      "truth_version": "R1.v3.json"
+      "truth_version": "R1.v4.json"
     },
     {
       "round": "2026-11-13T0226Z",
@@ -136,12 +136,12 @@
       },
       "quality": {
         "Q1": "PASS",
-        "Q2": "FAIL",
+        "Q2": "PASS",
         "Q3": "PASS",
         "Q4": "PASS"
       },
       "agent_duration_s": 140,
-      "truth_version": "R1.v3.json"
+      "truth_version": "R1.v4.json"
     },
     {
       "round": "2026-11-13T0238Z",
@@ -163,7 +163,7 @@
         "Q4": "PASS"
       },
       "agent_duration_s": 244,
-      "truth_version": "R1.v3.json"
+      "truth_version": "R1.v4.json"
     },
     {
       "round": "2026-11-12T0302Z",
@@ -185,7 +185,7 @@
         "Q4": "FAIL"
       },
       "agent_duration_s": 134,
-      "truth_version": "R2.v6.json"
+      "truth_version": "R2.v7.json"
     },
     {
       "round": "2026-11-12T0312Z",
@@ -207,7 +207,7 @@
         "Q4": "PASS"
       },
       "agent_duration_s": 330,
-      "truth_version": "R2.v6.json"
+      "truth_version": "R2.v7.json"
     },
     {
       "round": "2026-11-12T0326Z",
@@ -229,7 +229,7 @@
         "Q4": "PASS"
       },
       "agent_duration_s": 365,
-      "truth_version": "R2.v6.json"
+      "truth_version": "R2.v7.json"
     },
     {
       "round": "2026-11-12T0341Z",
@@ -251,7 +251,7 @@
         "Q4": "NO_SECTION"
       },
       "agent_duration_s": 172,
-      "truth_version": "R2.v6.json"
+      "truth_version": "R2.v7.json"
     },
     {
       "round": "2026-11-12T0351Z",
@@ -268,12 +268,12 @@
       },
       "quality": {
         "Q1": "PASS",
-        "Q2": "FAIL",
+        "Q2": "PASS",
         "Q3": "PASS",
         "Q4": "FAIL"
       },
       "agent_duration_s": 111,
-      "truth_version": "R2.v6.json"
+      "truth_version": "R2.v7.json"
     }
   ]
 }

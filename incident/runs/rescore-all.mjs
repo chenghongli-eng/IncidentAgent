@@ -91,6 +91,17 @@ function relToDir(p) {
   return r.startsWith('..') ? p : r;
 }
 
+/**
+ * 分数文件里**属于判定**的部分。
+ *
+ * 去掉 `rescored_from`（记账：这份分数是从哪一版重打来的）——
+ * 剩下的是「判了什么」：准确率、档位、发布归因、Q1–Q4、命中片段。
+ */
+function verdictContent(score) {
+  const { rescored_from, ...rest } = score ?? {};
+  return JSON.stringify(rest);
+}
+
 const scoreFiles = readdirSync(DIR)
   .filter((f) => /^score-\d{4}-\d{2}-\d{2}T\d{4}Z\.json$/.test(f))
   .sort();
@@ -196,11 +207,24 @@ for (const f of scoreFiles) {
   if (existsSync(archivePath)) {
     const archived = readFileSync(archivePath, 'utf8');
     if (archived !== readFileSync(path, 'utf8')) {
-      process.stderr.write(
-        `归档已存在且内容不同：${archiveName}\n` +
-          '  这一轮在归档之后又被改过。先查清楚，别拿新的盖掉旧的。\n',
-      );
-      process.exit(1);
+      // 比**判定内容**，不比记账。
+      //
+      // `rescored_from` 记的是「这份分数是从哪一版重打来的」，
+      // 不属于判定本身。同一个版本重打两次（脚本自己干的）会让它从
+      // 「从 v8 重打来」变成「从 v9 重打来」——归档件与当前文件只差这一个字段，
+      // 判定一个字没动。这时候护栏必须放行：它要抓的是「有人在归档之后
+      // 手工改过判定」，不是「脚本又跑了一遍」。
+      // 仓库内 12 轮实测全都属于这一种（v10 重打时逐轮核过）。
+      const sameVerdict =
+        verdictContent(JSON.parse(archived)) ===
+        verdictContent(JSON.parse(readFileSync(path, 'utf8')));
+      if (!sameVerdict) {
+        process.stderr.write(
+          `归档已存在且内容不同：${archiveName}\n` +
+            '  这一轮在归档之后判定被改过。先查清楚，别拿新的盖掉旧的。\n',
+        );
+        process.exit(1);
+      }
     }
   }
 

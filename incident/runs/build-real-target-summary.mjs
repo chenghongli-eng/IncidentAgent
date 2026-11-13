@@ -50,8 +50,8 @@ if (!ROUNDS || !TRUTH || !AUDIT) {
 
 /** 两类故障臂：R1 = 运行时环境里的阈值，R2 = 随发布进制品的阈值。 */
 const ARMS = {
-  R1: { fault: 'R1', truth: 'R1.v3.json' },
-  R2: { fault: 'R2', truth: 'R2.v6.json' },
+  R1: { fault: 'R1', truth: 'R1.v4.json' },
+  R2: { fault: 'R2', truth: 'R2.v7.json' },
 };
 
 const audit = JSON.parse(readFileSync(AUDIT, 'utf8'));

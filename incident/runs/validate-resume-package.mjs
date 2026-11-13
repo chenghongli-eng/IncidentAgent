@@ -284,6 +284,7 @@ if (!summaryRaw) {
 if (!summary) {
   check('C6 简历包的独立样本数字与仓库总表一致', false, summaryProblem);
   check('C7 简历包没有落后于总表的旧口径', false, summaryProblem);
+  check('C8 简历包披露了分层归因判据的口径变更', false, summaryProblem);
 } else {
   const totals = summary.totals ?? {};
   const ratios = summary.ratios ?? {};
@@ -342,9 +343,13 @@ if (!summary) {
 
   const q2Seen = [
     ...new Set(
-      [...pkgText.matchAll(/分层归因[^0-9]{0,8}(\d+)\s*\/\s*(\d+)/g)].map(
-        (m) => `${m[1]}/${m[2]}`,
-      ),
+      [...pkgText.matchAll(/分层归因[^0-9]{0,8}(\d+)\s*\/\s*(\d+)/g)]
+        .map((m) => ({ raw: `${m[1]}/${m[2]}`, hits: +m[1], denom: +m[2] }))
+        // 只认**分母等于轮次数**的那种「命中数/轮次」写法。
+        // 别的分母（校准 31/31、分臂命中 5/5）不是 Q2 命中率的写法，
+        // 让这条检查去判它，就是**量错了东西**——判据自己犯过的毛病。
+        .filter((m) => m.denom === Number(totals.rounds))
+        .map((m) => m.raw),
     ),
   ];
   const q2Bad = q2Seen.filter(
@@ -352,10 +357,12 @@ if (!summary) {
   );
   check(
     'C6 简历包写的分层归因命中数与仓库总表一致',
-    q2Bad.length === 0,
+    q2Bad.length === 0 && q2Seen.length > 0,
     q2Seen.length === 0
-      ? '包内未出现分层归因数字（不校验）'
-      : `包内取值 ${JSON.stringify(q2Seen)} / 总表 ${ratios.q2_layered_attribution}`,
+      ? '包内没写分层归因命中数——查不到就报错，不许静默跳过'
+      : q2Bad.length === 0
+        ? `包内取值 ${JSON.stringify(q2Seen)} / 总表 ${ratios.q2_layered_attribution}`
+        : `包内取值 ${JSON.stringify(q2Seen)} / 总表 ${ratios.q2_layered_attribution}`,
   );
 
   // C7：总表已经跑出新结果，包里却还在说「重跑未执行」——那是**事实性过期**，
@@ -383,6 +390,13 @@ if (!summary) {
     '重跑批次待执行',
     '发布类命中率暂缺',
     '发布类的独立样本数与命中率目前未知',
+    // Q2（分层归因）判据从「数层级词出现次数」改成「数不同层级角色」之后，
+    // 旧口径的这些说法都不再成立：命中数变了（5/10 → 7/10），而且
+    // 「未改判据迁就」这句话本身已经与事实相反——判据**改过**。
+    '分层归因 5/10',
+    '分层归因只命中 5/10',
+    'Q2 5/10',
+    '未改判据迁就',
   ];
   const staleHits = STALE_MARKERS.filter((m) => currentText.includes(m));
   check(
@@ -391,6 +405,23 @@ if (!summary) {
     staleHits.length === 0
       ? `总表口径：独立样本 ${totals.independent_samples}，命中 ${ratios.root_cause?.all}`
       : `包里仍写着旧口径：${staleHits.join('、')}；总表已是 ${totals.independent_samples} 个独立样本`,
+  );
+
+  // C8：Q2 的命中数这次**变了**（判据从「数层级词出现次数」改成
+  // 「数不同层级角色」）。数字变了就必须带着披露一起走——
+  // 「披露义务随数字一起走」是这批 claim 的放行条件之一。
+  //
+  // 怎么判有没有披露：包内必须出现「层级角色」这个词组。
+  // 它是**新口径自身的名字**（命中≥2 个不同层级角色组才算分层），
+  // 旧口径的说法里不可能出现它——所以它出现 = 新口径被写出来了。
+  // 反过来，如果哪天口径又改了，这个词也得跟着换。
+  const disclosed = pkgText.includes('层级角色');
+  check(
+    'C8 简历包披露了分层归因判据的口径变更',
+    disclosed,
+    disclosed
+      ? '包内已写明新口径（按不同层级角色计数）'
+      : '包里没有「层级角色」字样——命中数变了却没有披露口径变更',
   );
 }
 

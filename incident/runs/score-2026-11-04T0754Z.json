@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-04T0754Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v9",
+  "rubric_version": "v10",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -56,10 +56,10 @@
     },
     {
       "id": "Q2",
-      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "name": "分层归因（至少分出两个不同层级角色）",
       "scope": "whole",
-      "result": "PASS",
-      "evidence": "…条为方法条目）。 --- # 八、关键反事实（用于区分“配置”与“代码”谁是触发源） 同一份日志/指标里存在两个天然对照组： | 时间窗（UTC） | 运行实…"
+      "result": "FAIL",
+      "evidence": null
     },
     {
       "id": "Q3",

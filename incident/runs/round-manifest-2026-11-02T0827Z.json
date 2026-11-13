@@ -127,7 +127,7 @@
   },
   "score": {
     "path": "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/score-2026-11-02T0827Z.json",
-    "rubric_version": "v9",
+    "rubric_version": "v10",
     "root_cause_accuracy": 1,
     "accuracy_tier": "hit",
     "deployment_attribution": "relevant",

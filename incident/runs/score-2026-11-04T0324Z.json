@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-04T0324Z.md",
   "ground_truth": "ground-truth/F4.json",
-  "rubric_version": "v9",
+  "rubric_version": "v10",
   "fault_id": "F4",
   "fault_class": "配置类变更",
   "section_style": "contract-marker",
@@ -54,10 +54,10 @@
     },
     {
       "id": "Q2",
-      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "name": "分层归因（至少分出两个不同层级角色）",
       "scope": "whole",
-      "result": "FAIL",
-      "evidence": "…返回 500。 即\"配置让依赖必然失败\"+\"代码不再容错\"两个必要条件的叠加。 【支持证据】 - 5xx 序列 03:41:30 前完全缺失，0…"
+      "result": "PASS",
+      "evidence": "（角色组命中 2 个：触发层、必要·前提层）"
     },
     {
       "id": "Q3",

@@ -565,6 +565,73 @@ const LABEL_ONLY_REPORT = `# 空报告
 **反对证据 / 尚未解释**
 `;
 
+/**
+ * v10 的 Q2 校准件：**分层归因**这一条以前从不被校准（它只进指标表）。
+ *
+ * 三份合成件是同一段报告的三种改法，**逐行可对照**：
+ *   · `Q2_LAYERED_REPORT`：显式分出两层（触发源 + 必要条件），方向也对；
+ *   · `Q2_SINGLE_LAYER_REPORT`：只留一层（把「必要条件」那一行删掉）——
+ *     与上面那份**只差一行**，Q2 必须翻成 FAIL（v10 的鉴别点）；
+ *   · `Q2_WRONG_DIRECTION_REPORT`：同样分了两层，但把角色指派反了
+ *     （发布当触发源、运行时配置当必要条件）——Q2 必须**仍然 PASS**，
+ *     因为 Q2 只量「有没有分出层」，方向由 F4-D1 / 发布归因那条判据管。
+ *     这一条守的是**分工**，不是给 Q2 放水。
+ */
+const Q2_LAYERED_REPORT = `# 诊断报告
+
+【根因假设】
+置信度 0.85
+机制：02:32:34 的宿主机进程重启让新进程带上了 MANAGEMENT_HEALTH_DISKSPACE_THRESHOLD=50GB 这一运行时阈值，
+磁盘实际只剩 21.7GB，于是 DiskSpaceHealthIndicator 判 DOWN，/actuator/health 返回 503。
+触发源：运行时阈值 MANAGEMENT_HEALTH_DISKSPACE_THRESHOLD=50GB（配置层，由进程启动环境带入）。
+必要条件：磁盘长期只剩 21.7GB（既存条件，阈值抬高之前它一直判 UP）。
+发布变更无关：排除——制品 digest 未变，本次变的是运行时环境。
+
+【支持证据】
+- health 只有 diskSpace 一个 DOWN 分量，free=21.7GB < threshold=50GB。
+
+【已排除的假设及排除依据】
+- 磁盘被写满：排除（free 全程稳定，没有骤降）。
+- 数据库故障：排除（db UP）。
+- Redis 故障：排除（redis UP）。
+
+【反对证据 / 尚未解释】
+- 旧进程的阈值读不回来，是从行为差异反推的。
+`;
+
+/** 与上面那份**只差一行**：删掉「必要条件」那一行，其余一字不改。 */
+const Q2_SINGLE_LAYER_REPORT = Q2_LAYERED_REPORT.replace(
+  '必要条件：磁盘长期只剩 21.7GB（既存条件，阈值抬高之前它一直判 UP）。\n',
+  '',
+);
+
+/**
+ * 同样分了两层，但角色指派反了：把「发布」叫触发源、把运行时配置叫必要条件。
+ *
+ * 这一份是**只差方向**的对照对：Q2 必须仍然 PASS（分层这件事它做到了），
+ * 而发布归因必须翻成 relevant / wrong（过度归因由发布归因那条判据抓住）。
+ */
+const Q2_WRONG_DIRECTION_REPORT = `# 诊断报告
+
+【根因假设】
+置信度 0.85
+机制：02:32:34 的宿主机进程重启让新进程带上了 MANAGEMENT_HEALTH_DISKSPACE_THRESHOLD=50GB 这一运行时阈值，
+磁盘实际只剩 21.7GB，于是 DiskSpaceHealthIndicator 判 DOWN，/actuator/health 返回 503。
+触发源：本次发布带入了磁盘阈值 50GB（发布把这一配置带进了制品，运行时环境里没有单独的下发记录）。
+必要条件：运行环境里带着磁盘可用空间只剩 21.7GB 这个前提。
+
+【支持证据】
+- health 只有 diskSpace 一个 DOWN 分量，free=21.7GB < threshold=50GB。
+
+【已排除的假设及排除依据】
+- 磁盘被写满：排除（free 全程稳定，没有骤降）。
+- 数据库故障：排除（db UP）。
+- Redis 故障：排除（redis UP）。
+
+【反对证据 / 尚未解释】
+- 旧进程的阈值读不回来，是从行为差异反推的。
+`;
+
 const CASES = [
   {
     name: '10-27 F4 报告 × F4 真值',
@@ -840,6 +907,55 @@ const CASES = [
     expect_criteria: { 'F4-C1': 'PASS', 'F4-C2': 'PASS' },
     expect_quality: { Q3: 'PASS', Q4: 'FAIL' },
     expect_present: { section: 'against', pattern: '已排除' },
+  },
+  {
+    name: 'v10 Q2 正对照：显式分出两层（触发源 + 必要条件）→ Q2 必须 PASS',
+    report: null,
+    inline: Q2_LAYERED_REPORT,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.5, deployment: 'excluded', correct: 'correct' },
+    expect_quality: { Q2: 'PASS' },
+    expect_present: { section: 'whole', pattern: '必要条件' },
+  },
+  {
+    name: 'v10 Q2 负对照：与上一条**只差一行**（删掉必要条件那一行）→ Q2 必须 FAIL',
+    report: null,
+    inline: Q2_SINGLE_LAYER_REPORT,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.5, deployment: 'excluded', correct: 'correct' },
+    expect_quality: { Q2: 'FAIL' },
+    // 这一行必须真的没了：否则这一条考的是「本来就能过的那份」。
+    expect_absent: { section: 'whole', pattern: '必要条件' },
+  },
+  {
+    name: 'v10 Q2 只差方向的对照对：层级指派反了 → Q2 仍 PASS，但发布归因必须判成过度归因',
+    report: null,
+    inline: Q2_WRONG_DIRECTION_REPORT,
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'relevant', correct: 'wrong' },
+    expect_quality: { Q2: 'PASS' },
+    expect_deployment_checks: { 'F4-D1': 'FAIL', 'F4-D2': 'PASS' },
+  },
+  {
+    name: 'v10 Q2 真实报告（正）：10-30 F2 报告分了层 → Q2 PASS',
+    report: join(root, 'runs/agent-report-2026-10-30T0738Z.md'),
+    truth: join(root, 'runs/ground-truth/F2.json'),
+    expect: { accuracy: 1.0, deployment: 'relevant', correct: 'correct' },
+    expect_quality: { Q2: 'PASS' },
+    expect_present: { section: 'whole', pattern: '必要条件' },
+  },
+  {
+    name: 'v10 Q2 真实报告（负）：11-04 F4 报告只重复一种层级词 → Q2 FAIL',
+    report: join(root, 'runs/agent-report-2026-11-04T0754Z.md'),
+    truth: join(root, 'runs/ground-truth/F4.json'),
+    expect: { accuracy: 0.0, deployment: 'unclear', correct: 'unclear' },
+    expect_quality: { Q2: 'FAIL' },
+    // 它只写了「触发源」一种层级词：写两遍不是分层。
+    expect_present: { section: 'whole', pattern: '触发源' },
+    expect_absent: {
+      section: 'whole',
+      pattern: '必要条件|前提条件|前置条件|放大条件|既存条件|背景条件',
+    },
   },
 ];
 

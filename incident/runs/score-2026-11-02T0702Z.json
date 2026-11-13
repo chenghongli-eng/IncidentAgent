@@ -1,7 +1,7 @@
 {
   "report": "agent-report-2026-11-02T0702Z.md",
   "ground_truth": "ground-truth/F2.json",
-  "rubric_version": "v9",
+  "rubric_version": "v10",
   "fault_id": "F2",
   "fault_class": "变更关联（代码）",
   "section_style": "markdown-heading",
@@ -54,7 +54,7 @@
     },
     {
       "id": "Q2",
-      "name": "分层归因（触发源 / 必要条件 / 放大条件）",
+      "name": "分层归因（至少分出两个不同层级角色）",
       "scope": "whole",
       "result": "FAIL",
       "evidence": null
