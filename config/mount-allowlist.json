@@ -14,6 +14,11 @@
       "path": "/mnt/my-work/incident-lab/workspace-real",
       "allowReadWrite": true,
       "description": "Incident-lab real-target workspace — the real target's source snapshot, kept separate from the synthetic fixture workspace (see incident/lab-paths.json)"
+    },
+    {
+      "path": "/mnt/my-work/incident-lab/workspace-replay",
+      "allowReadWrite": true,
+      "description": "Incident-lab replay workspace — historical-incident replay: a slice of past logs plus the source tree as it was at the time of the incident. No live service, no metrics/actuator/ledger."
     }
   ],
   "blockedPatterns": [],
