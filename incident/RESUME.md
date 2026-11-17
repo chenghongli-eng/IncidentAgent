@@ -107,7 +107,30 @@ amplifier / mechanism），与 v10 判据的层级角色组同构。
 **仓库外**：工作区 `/mnt/my-work/incident-lab/`、归档 `~/incident-lab-archive/`
 （轮次产物、真值、简历包副本）。
 
-## 八、怎么跑一轮（压缩版）
+## 八、交付形态（2026-11-17 定）
+
+**交付对象：公司内部的别的团队**（不是公开发布）。据此定的交付物：
+
+| 件 | 角色 | 在哪 |
+| -- | ---- | ---- |
+| Agent 本体（四段 Prompt + 8 个 Skill） | 交付主体 | `agent-profile/`、`skills/` |
+| 只读观测 CLI | 交付主体（唯一证据通道） | `tools/incident-readonly.mjs` |
+| 通道契约（描述符字段与规则） | 交付主体——对方唯一要实现的东西 | `targets/README.md` |
+| 验收命令 `runs/check-target.mjs`（D0–D2 + P1–P5，带负对照） | 交付主体 | `runs/check-target.mjs` |
+| 交付说明书 | 交付主体 | `DELIVERY.md` |
+| 合成夹具 | 样例 demo + 回归基线 | `target-service/`、`docker-compose.yml` |
+| 量具（判据 / 闸门 / 独立性审计） | 可选包：怎么验证接进来的 Agent 没作弊 | `runs/` |
+
+**新增的交付闸门**（2026-11-17）：`check-target.mjs` 的 D0/D1/D2 治的是
+「换环境最容易漏、且失败得最安静」的三件事——本体里那行观测 CLI 绝对路径、
+profile id 漂移、改了 `identity.json` 没同步入库。
+D0 上线当天就抓出两个真问题：一个是抽取逻辑自己写错（`LAB="node <路径>"`
+形态），一个是 `targets/descriptor.mjs` 的内置默认路径与 CLI 漂移
+（两边各算各的相对路径；已改为统一读 `lab-paths.json`）。
+
+**这一节不改变任何既有结论**：交付物是新增的，判据没动，简历包没动。
+
+## 九、怎么跑一轮（压缩版）
 
 前置：`lab.sh up -d --build` 起台子、`~/.config/miniclaw-lab/lab.env` 就位、Miniclaw 服务在线。
 一轮由 `runs/run-round.mjs` 编排：**前置闸门 → 摆静默态 → 清面 → 注入 → 等告警 → 跑 Agent →
@@ -118,7 +141,7 @@ amplifier / mechanism），与 v10 判据的层级角色组同构。
 `~/incident-lab-archive/real-ground-truth/<故障ID>.json`，虽然 11-16 已推到已采纳版本，
 但显式传参能避免再次静默走偏。
 
-## 九、跑之前先看
+## 十、跑之前先看
 
 1. [README.md](README.md) — 三层定位、改动政策、已知边界与欠债。
 2. [REAL-TARGET.md](REAL-TARGET.md) — 接入真实靶子的方案与合规前置。

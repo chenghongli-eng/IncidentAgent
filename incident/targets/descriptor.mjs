@@ -19,15 +19,25 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// 本文件在 incident/targets/ 下，所以「夹具默认值」相对它就是 ../logs/ 与
-// ../target-service/——和 CLI（incident/tools/）相对自身算出来的同一处。
+/** 本文件所在目录：按名字找描述符时，仓库内的 `incident/targets/` 是其中一站。 */
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+// 本文件在 incident/targets/ 下，而 CLI（tools/incident-readonly.mjs）的活副本
+// 在 2026-11-04 搬家时跟着工作区搬到了仓库外。**两边各算各的相对路径就会漂移**：
+// CLI 的默认是相对自己算的 → <workspace>/logs；本文件相对自身算 → incident/logs
+// （那个目录已经不存在了，仓库里没有 logs/）。
+// 症状是静默的：体检报「日志目录不存在」，而夹具轮次照跑不误（它们用 CLI 的
+// 默认值），所以没人发现。
+// 所以路径只认一个真相源：lab-paths.json。
+const LAB_PATHS = JSON.parse(
+  readFileSync(new URL('../lab-paths.json', import.meta.url), 'utf8'),
+);
 
 export const FIXTURE_DEFAULTS = {
   prometheusUrl: 'http://127.0.0.1:9090',
   actuatorBaseUrl: 'http://127.0.0.1:8080',
-  logsDir: join(HERE, '..', 'logs'),
-  repoPath: join(HERE, '..', 'target-service'),
+  logsDir: join(LAB_PATHS.workspaceRoot, 'logs'),
+  repoPath: LAB_PATHS.serviceDir,
   container: 'target-service',
   appStartedPattern: 'Started TargetServiceApplication',
 };

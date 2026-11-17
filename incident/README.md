@@ -85,6 +85,7 @@
 | [runs/gate-w-workspace-isolation.mjs](runs/gate-w-workspace-isolation.mjs) | 闸门 W：工作区与答案键不相邻                                                                                                     |
 | [runs/control-arms.mjs](runs/control-arms.mjs)                             | 受控对照实验：同一次故障的三臂对照，用于验证"两个条件叠加"的论断                                                                 |
 | [runs/round-table.mjs](runs/round-table.mjs)                               | 把 manifest + score 汇总成一张指标表                                                                                             |
+| [runs/check-target.mjs](runs/check-target.mjs)                             | 交付体检：一条命令回答「这个靶子的接入合格吗」（D0–D2 交付专有 + P1–P5 真实靶子闸门）                                     |
 | `runs/*-control.mjs`                                                       | 负对照：证明量具**认得出**也**认不得**                                                                                           |
 
 负对照不是形式主义。真实发生过一次：比例量具把 Prometheus 的返回形状认错了，
@@ -183,6 +184,9 @@ Miniclaw 服务在线。一轮的完整流程由 `runs/run-round.mjs` 编排，
 
 - [RESUME.md](RESUME.md) — 断点存档（短版）：当前状态、冻结清单、开放线程、下一步
 - [RESUME-HISTORY.md](RESUME-HISTORY.md) — 完整过程存档（按日期倒序，量具缺陷史与判据演进史）
+- [DELIVERY.md](DELIVERY.md) — **交付说明**：把故障分析 Agent 接进别的团队的步骤与验收
 - [L1-WORKSPACE-MOVE.md](L1-WORKSPACE-MOVE.md) — 工作区搬出仓库的原因与做法
 - [REAL-TARGET.md](REAL-TARGET.md) — 接入真实公司项目作为靶子的方案与前置检查
 - [REAL-TARGET-SURVEY.md](REAL-TARGET-SURVEY.md) — 10 个候选项目的勘察结果与选型建议
+- [targets/README.md](targets/README.md) — 通道契约：靶子描述符的字段与规则
+- [DEPLOY-LEDGER.md](DEPLOY-LEDGER.md) — 部署台账的格式与采集方式
