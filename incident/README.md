@@ -85,7 +85,7 @@
 | [runs/gate-w-workspace-isolation.mjs](runs/gate-w-workspace-isolation.mjs) | 闸门 W：工作区与答案键不相邻                                                                                                     |
 | [runs/control-arms.mjs](runs/control-arms.mjs)                             | 受控对照实验：同一次故障的三臂对照，用于验证"两个条件叠加"的论断                                                                 |
 | [runs/round-table.mjs](runs/round-table.mjs)                               | 把 manifest + score 汇总成一张指标表                                                                                             |
-| [runs/check-target.mjs](runs/check-target.mjs)                             | 交付体检：一条命令回答「这个靶子的接入合格吗」（D0–D2 交付专有 + P1–P5 真实靶子闸门）                                     |
+| [runs/check-target.mjs](runs/check-target.mjs)                             | 交付体检：一条命令回答「这个靶子的接入合格吗」（D0–D2 交付专有 + P1–P5 真实靶子闸门）                                            |
 | `runs/*-control.mjs`                                                       | 负对照：证明量具**认得出**也**认不得**                                                                                           |
 
 负对照不是形式主义。真实发生过一次：比例量具把 Prometheus 的返回形状认错了，
@@ -163,9 +163,14 @@ Miniclaw 服务在线。一轮的完整流程由 `runs/run-round.mjs` 编排，
 
 ## 已知边界与欠债
 
-- **host 模式没有沙箱**。Agent 在 host 模式下能直读宿主机任意文件，
-  `~/.config/miniclaw-lab/lab.env` 一直可达。台子靠**闸门 W + 通道审计 + 泄漏扫描**
-  在事后发现，而不是事前阻断。给团队其他人跑之前，这必须先解决。
+- **host 模式曾经没有沙箱**（2026-11-17 已补上）。Agent 当时能直读宿主机任意文件，
+  `~/.config/miniclaw-lab/lab.env` 一直可达，答案键与公司凭据也在射程内。台子靠
+  **闸门 W + 通道审计 + 泄漏扫描**在**事后**发现，而不是事前阻断。现在改为
+  **事前阻断**：bubblewrap 白名单沙箱（工作区 `container_config.hostSandbox` 开启）
+  - 沙箱里只放行两个 inspect 格式的 docker shim。控制与边界见
+    [sandbox/README.md](sandbox/README.md)。
+- **沙箱只管文件系统，不管网络**。沙箱里的 Agent 仍能访问宿主机网络（公司内网
+  也在内），`/proc` 也仍然可见（只读通道要用 `lsof` 推进程锚点）。
 - **靶子是合成的**。故障形态只有三种，且是我想象的分布。
   真实靶子的接入方案见 [REAL-TARGET.md](REAL-TARGET.md)。
 - **每类只跑过 1–2 轮**。分数是单点，没有方差，不能用来比较"改 prompt 前后谁更好"。
@@ -189,4 +194,5 @@ Miniclaw 服务在线。一轮的完整流程由 `runs/run-round.mjs` 编排，
 - [REAL-TARGET.md](REAL-TARGET.md) — 接入真实公司项目作为靶子的方案与前置检查
 - [REAL-TARGET-SURVEY.md](REAL-TARGET-SURVEY.md) — 10 个候选项目的勘察结果与选型建议
 - [targets/README.md](targets/README.md) — 通道契约：靶子描述符的字段与规则
+- [sandbox/README.md](sandbox/README.md) — host 模式的文件系统沙箱（2026-11-17 起）
 - [DEPLOY-LEDGER.md](DEPLOY-LEDGER.md) — 部署台账的格式与采集方式

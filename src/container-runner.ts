@@ -29,6 +29,12 @@ import {
 } from './mount-security.js';
 import { canExecuteOnHost } from './host-execution-policy.js';
 import {
+  buildHostSandboxPlan,
+  collectExternalSymlinkTargets,
+  parseHostSandboxConfig,
+  type HostSandboxConfig,
+} from './host-sandbox.js';
+import {
   buildContainerEnvLines,
   clearInheritedClaudeProviderEnv,
   getClaudeProviderConfig,
@@ -2782,6 +2788,43 @@ export async function runHostAgent(
 
     const logsDir = logsBaseDir;
 
+    // Opt-in filesystem sandbox (bubblewrap).
+    //
+    // Invalid persisted sandbox configuration blocks the run rather than
+    // falling back to an unsandboxed spawn: a sandbox that silently loses a
+    // path does not protect anything, and the operator would not know.
+    let hostSandboxConfig: HostSandboxConfig | undefined;
+    if (group.containerConfigError) {
+      return hostModeSetupError(
+        `Persisted workspace configuration is invalid: ${group.containerConfigError}`,
+      );
+    }
+    if (group.containerConfig?.hostSandbox !== undefined) {
+      const parsedHostSandbox = parseHostSandboxConfig(
+        group.containerConfig.hostSandbox,
+      );
+      if (parsedHostSandbox.error || !parsedHostSandbox.config) {
+        return hostModeSetupError(
+          `Invalid host sandbox configuration: ${parsedHostSandbox.error ?? 'unparseable'}`,
+        );
+      }
+      hostSandboxConfig = parsedHostSandbox.config;
+    }
+
+    const hostSandboxReadablePaths = hostSandboxConfig
+      ? [
+          path.join(DATA_DIR, 'skills'),
+          path.join(DATA_DIR, 'plugins'),
+          // The session directory carries symlinks into the user's home
+          // (`.claude.json`, `plugins/`). Bind their targets so the runtime
+          // does not lose a capability to a dangling link.
+          ...collectExternalSymlinkTargets(resolvedSessionsDir),
+        ]
+      : [];
+    const hostSandboxWritablePaths = hostSandboxConfig
+      ? [path.join(DATA_DIR, 'agent-profile-runtime')]
+      : [];
+
     const hostResult = await new Promise<ContainerOutput>((resolve) => {
       let settled = false;
       const resolveOnce = (output: ContainerOutput): void => {
@@ -2794,12 +2837,45 @@ export async function runHostAgent(
       // Resolve absolute node path: bare 'node' fails with ENOENT under
       // Process managers / launchd / GUI launchers where PATH lacks nvm/fnm dirs.
       const hostNodeBinary = resolveHostNodeBinary(hostEnv);
-      const proc = spawn(hostNodeBinary, [agentRunnerDist], {
-        stdio: ['pipe', 'pipe', 'pipe'],
+      // Opt-in filesystem sandbox (bubblewrap). Absent `hostSandbox` in the
+      // workspace's container_config the runner is spawned exactly as before.
+      const hostSandboxPlan = buildHostSandboxPlan({
+        config: hostSandboxConfig,
+        workspaceDir: groupDir,
+        sessionsDir: resolvedSessionsDir,
+        ipcDir: groupIpcDir,
+        agentRunnerRoot: agentRunnerRoot,
+        nodeBinary: hostNodeBinary,
+        command: hostNodeBinary,
+        commandArgs: [agentRunnerDist],
         env: hostEnv,
         cwd: groupDir,
-        detached: true,
+        readablePaths: hostSandboxReadablePaths,
+        writablePaths: hostSandboxWritablePaths,
       });
+      if (hostSandboxPlan) {
+        logger.info(
+          {
+            group: group.name,
+            provider: hostSandboxPlan.command,
+            workspaceDir: groupDir,
+          },
+          'Spawning host agent inside filesystem sandbox',
+        );
+      }
+      const proc = hostSandboxPlan
+        ? spawn(hostSandboxPlan.command, hostSandboxPlan.args, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: hostSandboxPlan.env,
+            cwd: groupDir,
+            detached: true,
+          })
+        : spawn(hostNodeBinary, [agentRunnerDist], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: hostEnv,
+            cwd: groupDir,
+            detached: true,
+          });
 
       const processId = `host-${group.folder}-${Date.now()}`;
       onProcess(proc, processId, hostSelectedProfileId);

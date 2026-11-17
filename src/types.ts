@@ -1,4 +1,5 @@
 import type { StreamEvent, WorkflowRunSnapshot } from './stream-event.types.js';
+import type { HostSandboxConfig } from './host-sandbox.js';
 
 export interface AdditionalMount {
   hostPath: string; // Absolute canonical path on host
@@ -32,6 +33,8 @@ export interface ContainerConfig {
   version?: 1;
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  /** Opt-in filesystem sandbox for host-mode workspaces. */
+  hostSandbox?: HostSandboxConfig;
 }
 
 export type ExecutionMode = 'container' | 'host';

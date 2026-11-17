@@ -57,15 +57,74 @@ export BUILD_TIME
 cmd="${1:-up}"
 shift || true
 
+# ── 靶子事实服务（沙箱的窄通道后端）───────────────────────────────────────────
+#
+# 沙箱里没有 docker socket（给了就等于给了宿主机 root）。但 `runtime env` 与
+# `runtime started` 这两个合法通道要问靶子容器两件事：启动时刻、生效环境变量。
+#
+# 这两件事由本服务在**沙箱外面**回答：它跑在宿主机上（有 docker 权限），通过一
+# 个 unix socket 只回答这两个问题。它不是 docker 代理——容器名与 --format 都有
+# 放行名单，其余一律拒绝。
+#
+# 它必须活着：它挂了，沙箱里的 runtime env 会在轮次中途静默失效，Agent 只会说
+# 「证据不足」，没人看得出那是台子的问题。run-round.mjs 的 P13 闸门守这一条。
+FACTS_SERVER="${INCIDENT_FACTS_SERVER:-node ${LAB_DIR}/sandbox/target-facts-server.mjs}"
+# 运行目录在仓库外（与部署副本同住），pid 文件跟着它走。
+FACTS_STATE_DIR="$(node -e "process.stdout.write(require('${LAB_DIR}/sandbox/policy.json').stateDir)")"
+FACTS_PID_FILE="${FACTS_STATE_DIR}/target-facts-server.pid"
+
+facts_status() {
+  if [[ -f "$FACTS_PID_FILE" ]] && kill -0 "$(cat "$FACTS_PID_FILE")" 2>/dev/null; then
+    echo "target-facts-server: running (pid $(cat "$FACTS_PID_FILE"))"
+    return 0
+  fi
+  echo "target-facts-server: not running"
+  return 1
+}
+
+facts_start() {
+  if facts_status >/dev/null; then
+    echo "target-facts-server: 已在跑"
+    return 0
+  fi
+  mkdir -p "$(dirname "$FACTS_PID_FILE")"
+  nohup $FACTS_SERVER >/dev/null 2>&1 &
+  echo $! > "$FACTS_PID_FILE"
+  sleep 1
+  facts_status
+}
+
+facts_stop() {
+  if [[ -f "$FACTS_PID_FILE" ]]; then
+    kill "$(cat "$FACTS_PID_FILE")" 2>/dev/null || true
+    rm -f "$FACTS_PID_FILE"
+  fi
+  echo "target-facts-server: stopped"
+}
+
 case "$cmd" in
-  up)       exec "${COMPOSE[@]}" up -d "$@" ;;
+  up)
+    exec "${COMPOSE[@]}" up -d "$@"
+    ;;
   recreate) exec "${COMPOSE[@]}" up -d --force-recreate --no-deps "$@" ;;
   build)    exec "${COMPOSE[@]}" up -d --build "$@" ;;
   ps)       exec "${COMPOSE[@]}" ps "$@" ;;
   down)     exec "${COMPOSE[@]}" down "$@" ;;
   logs)     exec "${COMPOSE[@]}" logs -f "$@" ;;
+  facts)
+    case "${1:-status}" in
+      start)   facts_start ;;
+      stop)    facts_stop ;;
+      status)  facts_status ;;
+      check)   node "${LAB_DIR}/sandbox/target-facts-server.mjs" --check ;;
+      *)
+        echo "usage: lab.sh facts {start|stop|status|check}" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   *)
-    echo "usage: lab.sh {up|recreate|build|ps|down|logs} [args...]" >&2
+    echo "usage: lab.sh {up|recreate|build|ps|down|logs|facts} [args...]" >&2
     exit 2
     ;;
 esac

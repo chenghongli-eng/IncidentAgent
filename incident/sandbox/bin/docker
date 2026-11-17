@@ -1,0 +1,95 @@
+#!/usr/bin/env node
+// `docker` shim for the sandboxed IncidentAgent.
+//
+// The sandbox has no docker socket: handing one over would hand over the
+// host (a container with `-v /:/mnt` reads everything, and the sandbox stops
+// meaning anything). But two sanctioned channels — `runtime env` and
+// `runtime started` — need to ask the target container two specific things.
+//
+// So `docker` inside the sandbox is this shim: it forwards exactly one call
+// shape to the facts service that runs outside the sandbox, and refuses
+// everything else.
+//
+//   allowed: docker inspect <container> --format <one of the allowed formats>
+//   refused: every other subcommand, every other container, every other format
+//
+// The refusal is the point. A shim that said "not implemented" for everything
+// would be a sandbox hole punched by the shim itself.
+
+import net from 'node:net';
+import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const POLICY_PATH = path.join(HERE, '..', 'policy.json');
+
+function fail(message, code = 1) {
+  process.stderr.write(`docker (sandbox shim): ${message}\n`);
+  process.exit(code);
+}
+
+if (!existsSync(POLICY_PATH)) {
+  fail(`policy not found: ${POLICY_PATH}`);
+}
+const policy = JSON.parse(readFileSync(POLICY_PATH, 'utf8'));
+const socketPath = process.env.INCIDENT_FACTS_SOCKET || policy.factsSocket;
+const ALLOWED_CONTAINERS = new Set(policy.allowedContainers ?? []);
+const ALLOWED_FORMATS = new Set(policy.allowedInspectFormats ?? []);
+
+const argv = process.argv.slice(2);
+if (argv[0] !== 'inspect') {
+  fail(
+    `subcommand "${argv[0] ?? ''}" is not available inside the sandbox ` +
+      `(only "inspect" is served by the target facts channel)`,
+  );
+}
+const container = argv[1];
+const formatIndex = argv.indexOf('--format');
+if (!container || formatIndex === -1 || !argv[formatIndex + 1]) {
+  fail('usage: docker inspect <container> --format <format>');
+}
+const format = argv[formatIndex + 1];
+
+// Local allowlist check first: the service enforces it too, but the shim
+// must not be the weaker of the two.
+if (!ALLOWED_CONTAINERS.has(container)) {
+  fail(`container not allowed: ${container}`);
+}
+if (!ALLOWED_FORMATS.has(format)) {
+  fail('inspect format not allowed');
+}
+
+const request = `${JSON.stringify({ op: 'inspect', container, format })}\n`;
+
+const socket = net.createConnection(socketPath);
+let buffer = '';
+let settled = false;
+
+socket.on('connect', () => socket.write(request));
+socket.on('data', (chunk) => {
+  buffer += chunk.toString('utf8');
+  const newline = buffer.indexOf('\n');
+  if (newline === -1) return;
+  const line = buffer.slice(0, newline);
+  settled = true;
+  let response;
+  try {
+    response = JSON.parse(line);
+  } catch {
+    fail('malformed response from target facts service');
+  }
+  if (!response.ok) {
+    fail(String(response.error ?? 'request refused'));
+  }
+  process.stdout.write(String(response.value ?? ''));
+  socket.end();
+});
+socket.on('error', (err) => {
+  if (!settled) {
+    fail(`target facts service unavailable at ${socketPath}: ${err.message}`);
+  }
+});
+socket.on('close', () => {
+  if (!settled) fail('target facts service closed the connection');
+});

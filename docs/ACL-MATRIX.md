@@ -60,8 +60,8 @@
 | `/api/channel-accounts/*`                           | Login，仅本人渠道账号                         |
 | `/api/skills/*`                                     | Login，仅本人用户 Skills                      |
 | 用户级 `/api/mcp-servers/*`                         | Login，仅本人配置                             |
-| Workspace Memory v2                                 | Login + Workspace owner ACL，见 4.5           |
-| Miniclaw Owner Profile                             | Home actual owner + runtime exact-turn gate   |
+| Workspace Memory v2                                 | Login + Workspace owner ACL，见 4.6           |
+| Miniclaw Owner Profile                              | Home actual owner + runtime exact-turn gate   |
 | `/api/usage/*`                                      | Login；普通用户只见本人，管理视图再按角色过滤 |
 | `/api/billing/my/*`                                 | Login，仅本人                                 |
 
@@ -128,7 +128,21 @@ Memory 随 Workspace 保留，不跨 Workspace 复制。
 - 非 admin 必须同时是 owner 且拥有 `manage_group_env`。
 - admin 仍需先通过工作区 Access，不能借 admin 角色读取其他用户工作区。
 
-### 4.5 Workspace Memory v2
+### 4.5 Host 文件系统沙箱（可选）
+
+Host Workspace 默认**没有**文件系统边界：Runner 以服务同一用户的身份在宿主机上跑，
+可读该用户能读的一切。工作区可以开启白名单沙箱：
+
+- 开关与配置在工作区的 `container_config.hostSandbox`（`provider: "bwrap"`）。
+- 配置非法时 **Host 运行被拒绝**，不回退到无沙箱 spawn：沙箱丢了一条路径等于
+  沙箱没生效，运营者必须知道。
+- 未配置 `hostSandbox` 的工作区行为完全不变（默认关闭，不影响现有用户）。
+- 沙箱只覆盖文件系统，**不覆盖**网络与 `/proc`。
+- 沙箱内不应挂载 docker socket：那等价于宿主机 root 提权。
+
+实现：`src/host-sandbox.ts`（方案构造）、`src/container-runner.ts`（spawn 接线）。
+
+### 4.6 Workspace Memory v2
 
 `/api/memory/workspaces/:workspaceJid/items*` 先要求 Login，再按 URL 中的
 Workspace JID 执行资源级授权：
@@ -153,7 +167,7 @@ Agent Runtime 的 Workspace Memory MCP 还叠加执行上下文策略：
 定时任务和 Sub-Agent 即使继承 Workspace owner 身份，也不能写入 Workspace Memory；
 只读限制由 MCP 暴露面与主进程 IPC broker 共同执行，不能由模型参数扩大权限。
 
-### 4.6 Miniclaw Owner Profile
+### 4.7 Miniclaw Owner Profile
 
 `GET|PATCH /api/workspaces/:jid/owner-profile` 只接受当前登录用户自己的 Home
 Workspace，且目标必须绑定内置默认 Miniclaw。admin 不具有跨 owner bypass。
@@ -162,9 +176,9 @@ Runtime 的权限更严格：
 
 | 上下文                                       | 投影                | 修改                  |
 | -------------------------------------------- | ------------------- | --------------------- |
-| Home 内置 Miniclaw + actual owner turn      | 允许                | 当前 active turn 允许 |
-| Home 内置 Miniclaw + 非 owner 群成员 turn   | 拒绝                | 拒绝                  |
-| Home 内置 Miniclaw 普通 Runtime Session     | actual owner 时允许 | 当前 active turn 允许 |
+| Home 内置 Miniclaw + actual owner turn       | 允许                | 当前 active turn 允许 |
+| Home 内置 Miniclaw + 非 owner 群成员 turn    | 拒绝                | 拒绝                  |
+| Home 内置 Miniclaw 普通 Runtime Session      | actual owner 时允许 | 当前 active turn 允许 |
 | 自定义 AgentProfile / Scheduled / Task/Spawn | 拒绝                | 拒绝                  |
 | SDK Sub-Agent                                | 拒绝                | 拒绝                  |
 

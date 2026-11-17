@@ -130,6 +130,18 @@ Radix UI。路由以 `web/src/App.tsx` 为准：
 Host 模式没有 `maxConcurrentHostProcesses`。旧客户端提交该字段时后端仅为兼容而忽略，
 不得重新把它实现为全局 Host 并发池。
 
+Host 模式默认**没有文件系统沙箱**：Runner 以服务同一用户的身份在宿主机上跑，
+默认可读该用户能读的一切。需要收窄时，在工作区的 `container_config.hostSandbox`
+里开启 bubblewrap 白名单沙箱（`src/host-sandbox.ts`）：
+
+- 白名单姿态：只 bind Runner 真正需要的路径（工作区、会话目录、IPC 目录、系统目录、
+  agent-runner），`HOME` 换成空 tmpfs，其余一律不可见。
+- 不配 `hostSandbox` 时 spawn 路径完全不变；配置非法时**拒绝运行**，不回退到无沙箱。
+- 沙箱**不隔离** PID 命名空间与网络：前者会让只读通道的进程锚点说谎，后者是
+  靶子与模型端点的通路。需要隔离网络得另做（Landlock 网络规则要 ABI v4+）。
+- 沙箱里**不应**给 docker socket：那等于给宿主机 root。需要的少量 docker 事实
+  应由沙箱外的服务代答（见 `incident/sandbox/`）。
+
 ## 5. Agent Prompt 与能力
 
 自定义 Agent 使用四段 Prompt：

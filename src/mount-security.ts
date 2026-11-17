@@ -13,6 +13,10 @@ import crypto from 'crypto';
 
 import { DATA_DIR, MOUNT_ALLOWLIST_PATH } from './config.js';
 import { logger } from './logger.js';
+import {
+  parseHostSandboxConfig,
+  type HostSandboxConfig,
+} from './host-sandbox.js';
 import type {
   AdditionalMount,
   AllowedRoot,
@@ -365,6 +369,7 @@ export function parseContainerConfig(raw: unknown): ContainerConfigParseResult {
     'version',
     'timeout',
     'additionalMounts',
+    'hostSandbox',
   ]);
   if (configUnknown.length > 0) {
     return {
@@ -438,11 +443,23 @@ export function parseContainerConfig(raw: unknown): ContainerConfigParseResult {
     }
   }
 
+  // Host sandbox: opt-in, validated separately. An invalid block is a hard
+  // error — a sandbox that silently loses a path does not protect anything.
+  let hostSandbox: HostSandboxConfig | undefined;
+  if (raw.hostSandbox !== undefined) {
+    const parsedHostSandbox = parseHostSandboxConfig(raw.hostSandbox);
+    if (parsedHostSandbox.error) {
+      return { error: parsedHostSandbox.error };
+    }
+    hostSandbox = parsedHostSandbox.config;
+  }
+
   return {
     config: {
       ...(raw.version === 1 ? { version: 1 as const } : {}),
       ...(raw.timeout !== undefined ? { timeout: raw.timeout as number } : {}),
       ...(additionalMounts !== undefined ? { additionalMounts } : {}),
+      ...(hostSandbox !== undefined ? { hostSandbox } : {}),
     },
   };
 }

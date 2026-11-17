@@ -635,6 +635,23 @@ function fail(msg) {
   throw new Error(msg);
 }
 
+// ── 沙箱就位检查 ─────────────────────────────────────────────────────────────
+//
+// 2026-11-17 之前 host 模式没有沙箱：Agent 能直读宿主机任意文件，答案键（真值、
+// 既往报告）与公司凭据都在射程内。沙箱装上之后，这条闸门守住两件事：
+//
+//   1. 这个工作区确实开了沙箱（container_config.hostSandbox 在）；
+//   2. 沙箱里那条窄通道（docker shim → 靶子事实服务）是活的。
+//
+// 第 2 条不是形式检查：shim 的后端挂了，`runtime env` 会在轮次**中途**静默失效，
+// Agent 只会说「证据不足」，没人看得出那是台子的问题、不是诊断的问题。
+//
+// 实现放在 incident/runs/sandbox-preflight.mjs：那条逻辑要能单独验证，
+// 不能只能靠跑一整轮来撞。
+const { checkSandboxReady } = await import(
+  new URL('./sandbox-preflight.mjs', import.meta.url).href
+);
+
 // ── 旋钮文件 ──────────────────────────────────────────────────────────────
 function readKnob() {
   return Object.fromEntries(
@@ -2374,6 +2391,20 @@ async function main() {
     );
   }
   record('P11', true, `Miniclaw 服务在线（${probe.why}）`);
+
+  // P13：沙箱就位。
+  //
+  // host 模式曾经没有沙箱：Agent 能直读宿主机任意文件，答案键（真值、既往报告）、
+  // 故障注入清单与公司凭据都在射程内。沙箱装上之后，这条闸门守住两件事：
+  //   · 这个工作区确实开了沙箱；
+  //   · 沙箱里那条窄通道（docker shim → 靶子事实服务）是活的——它挂了，
+  //     runtime env 会在轮次中途静默失效，Agent 只会说「证据不足」，
+  //     没人看得出那是台子的问题而不是诊断的问题。
+  const sandboxCheck = await checkSandboxReady(WS_JID);
+  if (!sandboxCheck.ok) {
+    fail(`沙箱未就位：${sandboxCheck.why}`);
+  }
+  record('P13', true, sandboxCheck.detail);
 
   // P12：provider 接不接得住**一轮的规模**。
   //

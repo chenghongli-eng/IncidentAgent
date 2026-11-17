@@ -1,0 +1,29 @@
+{
+  "$comment": "IncidentAgent 沙箱策略。事实源：incident/sandbox/README.md。路径真相源仍是 incident/lab-paths.json；这里只放**沙箱**自己的路径与放行名单。",
+  "factsSocket": "/mnt/my-work/incident-lab/sandbox/run/facts.sock",
+  "shimBinDir": "/mnt/my-work/incident-lab/sandbox/bin",
+  "stateDir": "/mnt/my-work/incident-lab/sandbox/run",
+  "logFile": "/mnt/my-work/incident-lab/sandbox/run/target-facts-server.log",
+  "allowedContainers": ["target-service"],
+  "allowedInspectFormats": [
+    "{{.State.StartedAt}}",
+    "{{range .Config.Env}}{{println .}}{{end}}"
+  ],
+  "$comment_allowedFormats": "只放行 incident-readonly.mjs 真正用到的两个 docker inspect 格式。沙箱里没有 docker socket，Agent 只能通过这个窄通道问靶子容器的两件事：启动时刻、生效环境变量。其余 docker 子命令一律拒绝——沙箱授予的是能力，不是能提权的 socket。",
+  "$comment_workspace": "workspaceRoots 是三个工作区（夹具 / 真实靶 / 历史回放）。它们在工作区之外必须不可见：答案键、故障清单、注入脚本、公司凭据全在那里。",
+  "workspaceRoots": [
+    "/mnt/my-work/incident-lab/workspace",
+    "/mnt/my-work/incident-lab/workspace-real",
+    "/mnt/my-work/incident-lab/workspace-replay"
+  ],
+  "mustBeInvisible": [
+    "/home/fs-user/.config/miniclaw-lab/lab.env",
+    "/home/fs-user/.config/miniclaw-lab/systems.env",
+    "/home/fs-user/incident-lab-archive",
+    "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/runs/ground-truth",
+    "/mnt/my-work/ai_coding/study/miniclaw-main/miniclaw-main/incident/faults",
+    "/var/run/docker.sock",
+    "/home/fs-user/.ssh",
+    "/home/fs-user/.aws"
+  ]
+}
